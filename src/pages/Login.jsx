@@ -118,9 +118,7 @@ export const Login = () => {
           </form>
         </div>
 
-        <p className="text-center text-xs text-slate-500 font-medium">
-          आपके सपनों को करें सार्थक &bull; Authorized Personnel Only
-        </p>
+
       </div>
     </div>
   );

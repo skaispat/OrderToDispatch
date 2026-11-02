@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { authApi } from '../api/authApi';
+import { authApi, AUTH_SESSION_KEY } from '../api/authApi';
+import { navigate, LOGIN_PATH } from '../routes';
 import { firmsApi } from '../api/firmsApi';
 import { evaluateUserFirmAccess, buildFirmCatalog } from '../data/constants';
 import { APP_PAGES, ACCESS_LEVELS, getPageAccessLevel, isSuperAdminUser } from '../data/pageAccess';
@@ -196,10 +197,34 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const logout = async () => {
-    await authApi.logout();
+  // Sign out: clear the session, go to /login (replacing the current entry so Back does not
+  // reopen the protected page), then drop the user from state
+  const logout = useCallback(async () => {
+    try {
+      await authApi.logout();
+    } catch (err) {
+      console.error('Logout error:', err);
+      localStorage.removeItem(AUTH_SESSION_KEY);
+    }
+    navigate(LOGIN_PATH, { replace: true });
     setUser(null);
-  };
+  }, []);
+
+  // Signing out (or in as someone else) in another browser tab applies to this tab too
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key !== null && e.key !== AUTH_SESSION_KEY) return;
+      const sessionUser = authApi.getCurrentUser();
+      if (!sessionUser) {
+        navigate(LOGIN_PATH, { replace: true });
+        setUser(null);
+      } else {
+        setUser((prev) => (prev && String(prev.emp_id) === String(sessionUser.emp_id) ? prev : sessionUser));
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
 
   return (
     <AuthContext.Provider

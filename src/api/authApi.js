@@ -11,6 +11,8 @@ const toSession = (userRecord) => {
   };
 };
 
+export const AUTH_SESSION_KEY = SESSION_KEY;
+
 export const authApi = {
   // Login directly against users table: username / mobile_number & password
   async login(identifier, password) {

@@ -14,6 +14,8 @@ export const TAB_PATHS = {
 
 export const SETTINGS_SECTIONS = ['users'];
 
+export const LOGIN_PATH = '/login';
+
 const PATH_TO_TAB = Object.fromEntries(Object.entries(TAB_PATHS).map(([tab, path]) => [path.slice(1), tab]));
 // Old / alternative URLs that point to an existing page
 PATH_TO_TAB.dealers = 'distributors';
@@ -26,11 +28,29 @@ export function parsePath(pathname) {
     .toLowerCase()
     .split('/')
     .filter(Boolean);
+  if (segments[0] === 'login') return { tab: null, section: null, isLogin: true };
   // Old URL: Firms used to live under Settings
-  if (segments[0] === 'settings' && segments[1] === 'firms') return { tab: 'firms', section: null };
+  if (segments[0] === 'settings' && segments[1] === 'firms') return { tab: 'firms', section: null, isLogin: false };
   const tab = PATH_TO_TAB[segments[0]] || null;
   const section = tab === 'settings' && SETTINGS_SECTIONS.includes(segments[1]) ? segments[1] : null;
-  return { tab, section };
+  return { tab, section, isLogin: false };
+}
+
+/**
+ * Page path to return to after login, from ?redirect=. Only same-site paths of known pages are
+ * accepted (blocks open redirects such as //evil.com or https://...).
+ */
+export function safeRedirectPath(value) {
+  const path = String(value || '');
+  if (!path.startsWith('/') || path.startsWith('//') || path.includes('\\')) return null;
+  const { tab, section } = parsePath(path.split(/[?#]/)[0]);
+  return tab ? pathFor(tab, section) : null;
+}
+
+/** Login URL that brings the user back to `fromPath` after signing in (when it is a known page). */
+export function loginPathFor(fromPath) {
+  const back = safeRedirectPath(fromPath);
+  return back ? `${LOGIN_PATH}?redirect=${encodeURIComponent(back)}` : LOGIN_PATH;
 }
 
 export function pathFor(tab, section) {

@@ -18,7 +18,7 @@ import { SalesVisitsPage } from './pages/SalesVisitsPage';
 import { FirmsPage } from './pages/FirmsPage';
 import { ShieldAlert } from 'lucide-react';
 import { APP_PAGES } from './data/pageAccess';
-import { useRoute, pathFor } from './routes';
+import { useRoute, pathFor, parsePath, safeRedirectPath, loginPathFor } from './routes';
 
 const NoPageAccess = ({ user, onLogout }) => (
   <div className="min-h-[60vh] flex items-center justify-center p-6">
@@ -75,10 +75,22 @@ const MainLayout = () => {
     return tabs;
   }, [pageAccess, isSuperAdmin]);
 
+  // On /login (already signed in) open the page from ?redirect=, else the URL's own page
+  const redirectPath = route.isLogin
+    ? safeRedirectPath(new URLSearchParams(typeof window === 'undefined' ? '' : window.location.search).get('redirect'))
+    : null;
+  const target = redirectPath ? parsePath(redirectPath) : route;
+
   // Page from the URL; never render a page the user has no access to, even for a single frame
-  const currentTab = route.tab && canView(route.tab) ? route.tab : allowedTabs[0] || null;
-  const settingsSection = route.section || 'users';
+  const currentTab = target.tab && canView(target.tab) ? target.tab : allowedTabs[0] || null;
+  const settingsSection = target.section || 'users';
   const goTo = (tab, section) => route.navigate(pathFor(tab, section));
+
+  // Signed out: every URL goes to /login (remembering a known page to return to after login)
+  React.useEffect(() => {
+    if (loading || isAuthenticated || route.isLogin) return;
+    route.navigate(loginPathFor(route.pathname), { replace: true });
+  }, [loading, isAuthenticated, route]);
 
   // Keep the URL in sync: "/" , unknown or not-permitted paths go to the user's first allowed page
   React.useEffect(() => {
@@ -91,10 +103,14 @@ const MainLayout = () => {
 
   // Browser tab title per page
   React.useEffect(() => {
+    if (!loading && !isAuthenticated) {
+      document.title = 'Login | Sarthak TMT O2D Portal';
+      return;
+    }
     const page = APP_PAGES.find((p) => p.id === currentTab);
     const label = currentTab === 'settings' ? 'Settings' : page?.label;
     document.title = label ? `${label} | Sarthak TMT O2D Portal` : 'Sarthak TMT | Order-to-Dispatch (O2D) Portal';
-  }, [currentTab]);
+  }, [currentTab, loading, isAuthenticated]);
 
   if (loading) {
     return (
