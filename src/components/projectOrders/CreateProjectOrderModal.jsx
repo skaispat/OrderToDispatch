@@ -15,6 +15,7 @@ import {
   ArrowRight,
   Sparkles,
   RotateCcw,
+  MapPin,
 } from 'lucide-react';
 import {
   TMT_SIZES,
@@ -22,6 +23,25 @@ import {
   ONE_HELIX_PRODUCTS,
   ESSAR_PRODUCTS,
 } from '../../data/constants';
+
+// GSTIN: 2-digit state code, 10-char PAN, entity code, 'Z', check character
+const GSTIN_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+const ADDRESS_MAX_LENGTH = 500;
+
+const emptyDeliveryRow = () => ({
+  billingAddress: '',
+  billingGstNo: '',
+  shippingAddress: '',
+  shippingGst: '',
+  qty: '',
+});
+
+const isBlankDeliveryRow = (row) =>
+  !row.billingAddress.trim() &&
+  !row.billingGstNo.trim() &&
+  !row.shippingAddress.trim() &&
+  !row.shippingGst.trim() &&
+  String(row.qty).trim() === '';
 
 // sarthakProject: Sarthak TMT project order (Project Manager only) -> order id OR/<FY>/SAR/<n>, brand_type 'Sarthak'
 // headerSlot: optional content shown at the top of the form (e.g. Standard / Project order switch)
@@ -67,6 +87,9 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
   const [specification, setSpecification] = useState('');
   const [previewOrderId, setPreviewOrderId] = useState('');
   const [loading, setLoading] = useState(false);
+  // Billing / shipping records for delivery_details jsonb (shown once a party name is entered)
+  const [deliveryRows, setDeliveryRows] = useState([emptyDeliveryRow()]);
+  const showDeliveryDetails = !hidePartyField && partyName.trim() !== '';
 
   const getSubtypeProducts = (subtype = selectedSubtype) => {
     if (isEssarFirm) return ESSAR_PRODUCTS;
@@ -96,6 +119,7 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
       setPartyName('');
       setPoNumber('');
       setSpecification('');
+      setDeliveryRows([emptyDeliveryRow()]);
       const initialProducts = isJSWFirm
         ? JSW_ONE_PRODUCTS
         : isEssarFirm
@@ -204,8 +228,24 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
     );
   };
 
+  const handleAddDeliveryRow = () => {
+    setDeliveryRows((prev) => [...prev, emptyDeliveryRow()]);
+  };
+
+  const handleRemoveDeliveryRow = (index) => {
+    if (deliveryRows.length <= 1) return;
+    setDeliveryRows((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  const handleDeliveryChange = (index, field, value) => {
+    setDeliveryRows((prev) =>
+      prev.map((row, idx) => (idx === index ? { ...row, [field]: value } : row))
+    );
+  };
+
   // Calculations
   const totalQty = items.reduce((acc, it) => acc + (parseFloat(it.qty) || 0), 0);
+  const deliveryQty = deliveryRows.reduce((acc, row) => acc + (parseFloat(row.qty) || 0), 0);
   const totalValue = items.reduce(
     (acc, it) => acc + (parseFloat(it.qty) || 0) * (parseFloat(it.rate) || 0),
     0
@@ -256,6 +296,47 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
       return;
     }
 
+    // Billing / shipping records: fully blank rows are skipped, filled rows must be complete and valid
+    const filledDeliveryRows = showDeliveryDetails
+      ? deliveryRows.filter((row) => !isBlankDeliveryRow(row))
+      : [];
+    for (let i = 0; i < filledDeliveryRows.length; i++) {
+      const row = filledDeliveryRows[i];
+      const label = `Delivery record ${i + 1}`;
+      if (!row.billingAddress.trim()) {
+        alert(`${label}: please enter the Billing Address.`);
+        return;
+      }
+      if (!row.shippingAddress.trim()) {
+        alert(`${label}: please enter the Shipping Address.`);
+        return;
+      }
+      if (row.billingAddress.trim().length > ADDRESS_MAX_LENGTH || row.shippingAddress.trim().length > ADDRESS_MAX_LENGTH) {
+        alert(`${label}: addresses must be ${ADDRESS_MAX_LENGTH} characters or fewer.`);
+        return;
+      }
+      if (row.billingGstNo.trim() && !GSTIN_REGEX.test(row.billingGstNo.trim())) {
+        alert(`${label}: Billing GST No. is not a valid 15-character GSTIN.`);
+        return;
+      }
+      if (row.shippingGst.trim() && !GSTIN_REGEX.test(row.shippingGst.trim())) {
+        alert(`${label}: Shipping GST No. is not a valid 15-character GSTIN.`);
+        return;
+      }
+      const q = parseFloat(row.qty);
+      if (isNaN(q) || q <= 0) {
+        alert(`${label}: please enter a valid positive quantity (> 0 MT).`);
+        return;
+      }
+    }
+    const filledDeliveryQty = filledDeliveryRows.reduce((acc, row) => acc + (parseFloat(row.qty) || 0), 0);
+    if (filledDeliveryQty - totalQty > 0.001) {
+      alert(
+        `Delivery quantity (${filledDeliveryQty.toFixed(2)} MT) cannot exceed the total order quantity (${totalQty.toFixed(2)} MT).`
+      );
+      return;
+    }
+
     setLoading(true);
     try {
       const sanitizedItems = items.map((it) => {
@@ -280,6 +361,22 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
         totalValue: Number(totalValue.toFixed(2)),
       };
 
+      // delivery_details jsonb: { "1": { billing_address, billing_address_gst_no, shipping_address, shipping_gst, qty }, "2": {...} }
+      const deliveryDetailsPayload = filledDeliveryRows.length
+        ? Object.fromEntries(
+          filledDeliveryRows.map((row, idx) => [
+            String(idx + 1),
+            {
+              billing_address: row.billingAddress.trim(),
+              billing_address_gst_no: row.billingGstNo.trim() || null,
+              shipping_address: row.shippingAddress.trim(),
+              shipping_gst: row.shippingGst.trim() || null,
+              qty: Number((parseFloat(row.qty) || 0).toFixed(2)),
+            },
+          ])
+        )
+        : null;
+
       const payload = {
         created_at: new Date(orderDate).toISOString(),
         date: orderDate,
@@ -288,6 +385,7 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
         po_number: poNumber.trim() || null,
         firm_id: orderFirmId ? parseInt(orderFirmId, 10) : null,
         product_details: productDetailsPayload,
+        ...(deliveryDetailsPayload ? { delivery_details: deliveryDetailsPayload } : {}),
         ...(sarthakProject ? { brand_type: 'Sarthak', order_tag: orderTag } : {}),
       };
 
@@ -423,10 +521,10 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
         sarthakProject
           ? 'New Project Order — Sarthak TMT'
           : isJSWFirm
-          ? `New Project Order — ${selectedSubtype}`
-          : isEssarFirm
-            ? 'New Project Order — ESSAR Steel'
-            : 'New Project Order'
+            ? `New Project Order — ${selectedSubtype}`
+            : isEssarFirm
+              ? 'New Project Order — ESSAR Steel'
+              : 'New Project Order'
       }
       maxWidth="max-w-2xl"
     >
@@ -533,6 +631,124 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
             />
           </div>
         </div>
+
+        {/* Billing / Shipping records (saved in delivery_details jsonb), shown once a party name is entered */}
+        {showDeliveryDetails && (
+          <div className="space-y-2 pt-2 border-t border-slate-200">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-slate-800 uppercase flex items-center gap-1.5">
+                <MapPin className="w-3.5 h-3.5 text-[#a81b1e]" />
+                Billing & Shipping Details
+              </label>
+              <button
+                type="button"
+                onClick={handleAddDeliveryRow}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold text-[#a81b1e] bg-red-50 hover:bg-red-100 border border-red-200 transition cursor-pointer"
+              >
+                <Plus className="w-3 h-3" />
+                Add New Row
+              </button>
+            </div>
+
+            <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+              {deliveryRows.map((row, idx) => (
+                <div key={idx} className="p-2.5 rounded-lg border border-slate-200 bg-slate-50/70 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase">Record {idx + 1}</span>
+                    {deliveryRows.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveDeliveryRow(idx)}
+                        className="text-slate-400 hover:text-red-600 p-1 rounded transition cursor-pointer"
+                        title="Remove record"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Row 1: Billing */}
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
+                    <div className="sm:col-span-8">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">
+                        Billing Address
+                      </label>
+                      <input
+                        type="text"
+                        maxLength={ADDRESS_MAX_LENGTH}
+                        placeholder="Billing address"
+                        value={row.billingAddress}
+                        onChange={(e) => handleDeliveryChange(idx, 'billingAddress', e.target.value)}
+                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-[#a81b1e]"
+                      />
+                    </div>
+                    <div className="sm:col-span-4">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">
+                        Billing GST No.
+                      </label>
+                      <input
+                        type="text"
+                        maxLength={15}
+                        placeholder="e.g. 22AAAAA0000A1Z5"
+                        value={row.billingGstNo}
+                        onChange={(e) => handleDeliveryChange(idx, 'billingGstNo', e.target.value.toUpperCase().replace(/\s/g, ''))}
+                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 font-mono focus:outline-none focus:border-[#a81b1e]"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Row 2: Shipping */}
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
+                    <div className="sm:col-span-6">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">
+                        Shipping Address
+                      </label>
+                      <input
+                        type="text"
+                        maxLength={ADDRESS_MAX_LENGTH}
+                        placeholder="Shipping / site address"
+                        value={row.shippingAddress}
+                        onChange={(e) => handleDeliveryChange(idx, 'shippingAddress', e.target.value)}
+                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-[#a81b1e]"
+                      />
+                    </div>
+                    <div className="sm:col-span-4">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">
+                        Shipping GST No.
+                      </label>
+                      <input
+                        type="text"
+                        maxLength={15}
+                        placeholder="e.g. 22AAAAA0000A1Z5"
+                        value={row.shippingGst}
+                        onChange={(e) => handleDeliveryChange(idx, 'shippingGst', e.target.value.toUpperCase().replace(/\s/g, ''))}
+                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 font-mono focus:outline-none focus:border-[#a81b1e]"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5 text-right">
+                        Qty (MT)
+                      </label>
+                      <input
+                        type="number"
+                        step="any"
+                        min="0"
+                        placeholder="MT"
+                        value={row.qty}
+                        onChange={(e) => handleDeliveryChange(idx, 'qty', e.target.value)}
+                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 text-right focus:outline-none focus:border-[#a81b1e]"
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <p className={`text-[11px] font-semibold text-right ${deliveryQty - totalQty > 0.001 ? 'text-red-600' : 'text-slate-500'}`}>
+              Delivery qty {deliveryQty.toFixed(2)} MT of {totalQty.toFixed(2)} MT ordered
+            </p>
+          </div>
+        )}
 
         {/* Dynamic Product Details Line Items (Saved in jsonb) */}
         <div className="space-y-2 pt-2 border-t border-slate-200">

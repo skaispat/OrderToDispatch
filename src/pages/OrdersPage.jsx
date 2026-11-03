@@ -27,7 +27,8 @@ export const OrdersPage = () => {
   const [projectOrders, setProjectOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [activeSubTab, setActiveSubTab] = useState('standard'); // 'standard' (Retail) or 'project'
+  // 'standard' (Retail) or 'project'; Project Managers open on the Project tab
+  const [activeSubTab, setActiveSubTab] = useState(isProjectManager ? 'project' : 'standard');
   const [selectedProjectOrder, setSelectedProjectOrder] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('pending'); // 'pending' | 'delivered'
@@ -38,6 +39,11 @@ export const OrdersPage = () => {
   // Pagination for Project Orders view
   const [projectPage, setProjectPage] = useState(1);
   const [projectPageSize, setProjectPageSize] = useState(15);
+
+  // The user's position can resolve after the first render
+  useEffect(() => {
+    if (isProjectManager) setActiveSubTab('project');
+  }, [isProjectManager]);
 
   const isSalesRole = isASM || isSalesPerson;
   // Users without an assigned firm can view all firms in orders
@@ -211,7 +217,8 @@ export const OrdersPage = () => {
     isProjectManager && canCreateOrders && !isProjectBrand && !isDistributor && !ownOrdersOnly;
 
   const openOrderModal = () => {
-    setOrderFormType('standard');
+    // Project Managers open the Sarthak form on the Project Order form
+    setOrderFormType(canBookSarthakProject ? 'project' : 'standard');
     setIsOrderModalOpen(true);
   };
 
@@ -219,8 +226,8 @@ export const OrdersPage = () => {
   const orderTypeSwitch = canBookSarthakProject ? (
     <div className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-slate-100 border border-slate-200">
       {[
-        { id: 'standard', label: 'Retail Order' },
         { id: 'project', label: 'Project Order' },
+        { id: 'standard', label: 'Retail Order' },
       ].map((t) => (
         <button
           type="button"
@@ -304,7 +311,7 @@ export const OrdersPage = () => {
         <div className="flex items-center gap-2 border-b border-slate-200 pb-2 overflow-x-auto no-scrollbar">
           <button
             onClick={() => setActiveSubTab('standard')}
-            className={`px-3.5 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap shrink-0 transition cursor-pointer ${activeSubTab === 'standard'
+            className={`${isProjectManager ? 'order-2' : ''} px-3.5 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap shrink-0 transition cursor-pointer ${activeSubTab === 'standard'
               ? 'bg-slate-900 text-white shadow-xs'
               : 'bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50'
               }`}
@@ -395,7 +402,7 @@ export const OrdersPage = () => {
                     <th className="py-3 px-3.5">Order ID & Date</th>
                     {!hidePartyColumn && <th className="py-3 px-3.5">Party / Client Name</th>}
                     <th className="py-3 px-3.5">PO Number</th>
-                    <th className="py-3 px-3.5">{hideSpecificationColumn ? 'Brand / Series' : 'Specification'}</th>
+                    <th className="py-3 px-3.5">{hideSpecificationColumn ? 'Brand / Series' : 'Sizes'}</th>
                     <th className="py-3 px-3.5">Products Summary</th>
                     <th className="py-3 px-3.5 text-right">Tonnage</th>
                     <th className="py-3 px-3.5 text-right">Total Value</th>
@@ -439,6 +446,7 @@ export const OrdersPage = () => {
                   .slice(0, 2)
                   .map((it) => `${it.productName} (${it.size})`)
                   .join(', ');
+                const orderSizes = [...new Set(items.map((it) => it.size).filter(Boolean))];
                 const orderSubtype =
                   o.product_details?.subtype ||
                   o.product_details?.brand ||
@@ -495,6 +503,18 @@ export const OrdersPage = () => {
                       )}
                     </div>
 
+                    {/* Item sizes */}
+                    {orderSizes.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1">
+                        <span className="text-[10px] uppercase font-bold text-slate-500 mr-0.5">Sizes</span>
+                        {orderSizes.map((sz) => (
+                          <span key={sz} className="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] font-bold text-slate-700">
+                            {sz}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
                     {/* Metrics Box: Tonnage & Total Value */}
                     <div className="grid grid-cols-2 gap-2 p-2.5 rounded-lg bg-slate-50 border border-slate-100 text-xs">
                       <div>
@@ -550,7 +570,7 @@ export const OrdersPage = () => {
                       <th className="py-3 px-3.5">Order ID & Date</th>
                       {!hidePartyColumn && <th className="py-3 px-3.5">Party / Client Name</th>}
                       <th className="py-3 px-3.5">PO Number</th>
-                      <th className="py-3 px-3.5">{hideSpecificationColumn ? 'Brand / Series' : 'Specification'}</th>
+                      <th className="py-3 px-3.5">{hideSpecificationColumn ? 'Brand / Series' : 'Sizes'}</th>
                       <th className="py-3 px-3.5">Products Summary</th>
                       <th className="py-3 px-3.5 text-right">Tonnage</th>
                       <th className="py-3 px-3.5 text-right">Total Value</th>
@@ -565,6 +585,7 @@ export const OrdersPage = () => {
                         .slice(0, 2)
                         .map((it) => `${it.productName} (${it.size})`)
                         .join(', ');
+                      const orderSizes = [...new Set(items.map((it) => it.size).filter(Boolean))];
                       const orderSubtype =
                         o.product_details?.subtype ||
                         o.product_details?.brand ||
@@ -618,10 +639,16 @@ export const OrdersPage = () => {
                               >
                                 {orderSubtype}
                               </span>
+                            ) : orderSizes.length ? (
+                              <div className="flex flex-wrap gap-1 max-w-[12rem]">
+                                {orderSizes.map((sz) => (
+                                  <span key={sz} className="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] font-bold text-slate-700">
+                                    {sz}
+                                  </span>
+                                ))}
+                              </div>
                             ) : (
-                              <span className="text-slate-700 font-medium truncate max-w-xs block">
-                                {o.specification || o.product_details?.specification || '—'}
-                              </span>
+                              <span className="text-slate-400">—</span>
                             )}
                           </td>
 

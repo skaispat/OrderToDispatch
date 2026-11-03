@@ -25,7 +25,7 @@ import {
 
 export const AdminDashboard = () => {
   const { selectedBrand, refreshKey, triggerRefresh } = useApp();
-  const { user, firmAccess, isASM, isDistributor, isSalesPerson, isManager, isUnauthorizedUser, canAccessAllFirms, canEdit, distributorFirmId } = useAuth();
+  const { user, firmAccess, isASM, isDistributor, isSalesPerson, isManager, isUnauthorizedUser, canAccessAllFirms, canEdit, distributorFirmId, isProjectManager } = useAuth();
   const canCreateOrders = canEdit('orders');
   const canDispatch = canEdit('dispatch');
 
@@ -39,7 +39,13 @@ export const AdminDashboard = () => {
   const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
   const [dispatchModalOrder, setDispatchModalOrder] = useState(null);
   const [selectedProjectOrder, setSelectedProjectOrder] = useState(null);
-  const [activeAllTab, setActiveAllTab] = useState('standard'); // 'standard' (Retail) or 'project'
+  // 'standard' (Retail) or 'project'; Project Managers open on the Project tab
+  const [activeAllTab, setActiveAllTab] = useState(isProjectManager ? 'project' : 'standard');
+
+  // The user's position can resolve after the first render
+  useEffect(() => {
+    if (isProjectManager) setActiveAllTab('project');
+  }, [isProjectManager]);
 
   // Pagination for project orders table
   const [dashboardPage, setDashboardPage] = useState(1);
@@ -640,7 +646,7 @@ export const AdminDashboard = () => {
                 <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200 overflow-x-auto no-scrollbar max-w-full">
                   <button
                     onClick={() => setActiveAllTab('standard')}
-                    className={`px-3 py-1 rounded text-xs font-bold whitespace-nowrap shrink-0 transition cursor-pointer ${activeAllTab === 'standard'
+                    className={`${isProjectManager ? 'order-2' : ''} px-3 py-1 rounded text-xs font-bold whitespace-nowrap shrink-0 transition cursor-pointer ${activeAllTab === 'standard'
                       ? 'bg-white text-slate-900 shadow-2xs'
                       : 'text-slate-600 hover:text-slate-900'
                       }`}

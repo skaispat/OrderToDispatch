@@ -322,6 +322,23 @@ export const projectOrdersApi = {
 
       const spec = productDetails.specification || productDetails.remarks || null;
 
+      // delivery_details jsonb { "1": {...}, "2": {...} } -> ordered list of records
+      let deliveryDetails = o.delivery_details;
+      if (typeof deliveryDetails === 'string') {
+        try {
+          deliveryDetails = JSON.parse(deliveryDetails);
+        } catch (e) {
+          deliveryDetails = null;
+        }
+      }
+      const deliveries =
+        deliveryDetails && typeof deliveryDetails === 'object' && !Array.isArray(deliveryDetails)
+          ? Object.keys(deliveryDetails)
+            .sort((a, b) => (parseInt(a, 10) || 0) - (parseInt(b, 10) || 0))
+            .map((key) => deliveryDetails[key])
+            .filter((d) => d && typeof d === 'object')
+          : [];
+
       return {
         ...o,
         db_id: o.id,
@@ -336,6 +353,7 @@ export const projectOrdersApi = {
         status: o.status || 'pending',
         specification: spec,
         product_details: productDetails,
+        deliveries,
         items,
         total_qty: Number(Number.isFinite(totalQty) ? totalQty.toFixed(2) : '0.00'),
         total_value: Number(Number.isFinite(totalValue) ? totalValue.toFixed(2) : '0.00'),
@@ -366,6 +384,10 @@ export const projectOrdersApi = {
         order_id: orderId,
         created_at: new Date(effectiveDate).toISOString(),
         ...(payload.brand_type ? { brand_type: payload.brand_type } : {}),
+        // Billing / shipping records keyed "1", "2", ... (sent only when the form has any)
+        ...(payload.delivery_details && typeof payload.delivery_details === 'object'
+          ? { delivery_details: payload.delivery_details }
+          : {}),
       };
 
       const { data, error } = await supabase.from('project_orders').insert([dbPayload]).select().single();

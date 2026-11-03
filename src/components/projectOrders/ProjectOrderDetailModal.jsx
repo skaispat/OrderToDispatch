@@ -1,6 +1,6 @@
 import React from 'react';
 import { Modal } from '../common/Modal';
-import { Building, FileText, User, Calendar, Layers } from 'lucide-react';
+import { Building, FileText, User, Calendar, Layers, MapPin } from 'lucide-react';
 
 export const ProjectOrderDetailModal = ({ isOpen, onClose, order }) => {
   if (!order) return null;
@@ -19,6 +19,7 @@ export const ProjectOrderDetailModal = ({ isOpen, onClose, order }) => {
     0
   );
   const totalValue = parseFloat(order.total_value) > 0 ? parseFloat(order.total_value) : computedValue;
+  const deliveries = Array.isArray(order.deliveries) ? order.deliveries : [];
 
 
   const isJSWFirm = Number(order.firm_id) === 2 || /jsw/i.test(order.firm_name || '');
@@ -133,6 +134,31 @@ export const ProjectOrderDetailModal = ({ isOpen, onClose, order }) => {
             </div>
           )}
         </div>
+
+        {/* Billing & Shipping records (delivery_details) */}
+        {deliveries.length > 0 && (
+          <div className="space-y-2">
+            <h4 className="font-bold text-slate-800 uppercase text-[11px] flex items-center gap-1.5">
+              <MapPin className="w-3.5 h-3.5 text-[#a81b1e]" />
+              Billing & Shipping Details ({deliveries.length})
+            </h4>
+            {deliveries.map((d, idx) => (
+              <div key={idx} className="p-2.5 rounded-lg border border-slate-200 bg-slate-50/70 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div>
+                  <span className="text-[9px] uppercase text-slate-400 block font-bold">Billing Address</span>
+                  <p className="font-semibold text-slate-900 break-words">{d.billing_address || '—'}</p>
+                  <p className="text-[11px] font-mono text-slate-600">GST: {d.billing_address_gst_no || '—'}</p>
+                </div>
+                <div>
+                  <span className="text-[9px] uppercase text-slate-400 block font-bold">Shipping Address</span>
+                  <p className="font-semibold text-slate-900 break-words">{d.shipping_address || '—'}</p>
+                  <p className="text-[11px] font-mono text-slate-600">GST: {d.shipping_gst || '—'}</p>
+                  <p className="text-[11px] font-bold text-slate-800">Qty: {(parseFloat(d.qty) || 0).toFixed(2)} MT</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Product Details Breakdown */}
         <div className="space-y-2">
