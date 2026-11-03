@@ -27,21 +27,34 @@ import {
 // GSTIN: 2-digit state code, 10-char PAN, entity code, 'Z', check character
 const GSTIN_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 const ADDRESS_MAX_LENGTH = 500;
+const CONSIGNEE_NAME_MAX_LENGTH = 200;
+const SHORT_TEXT_MAX_LENGTH = 100; // grade, section, lot no
 
+// Delivery lot of a consignee: its qty is part of the consignee's total qty
+const emptyLot = () => ({ lotNo: '', qty: '', startDate: '', endDate: '' });
+
+const isBlankLot = (lot) =>
+  !lot.lotNo.trim() && String(lot.qty).trim() === '' && !lot.startDate && !lot.endDate;
+
+// Consignee (ship-to) record; the buyer (bill-to) is entered once for the whole order
 const emptyDeliveryRow = () => ({
-  billingAddress: '',
-  billingGstNo: '',
+  consigneeName: '',
   shippingAddress: '',
   shippingGst: '',
-  qty: '',
+  grade: '',
+  section: '',
+  lots: [emptyLot()],
 });
 
 const isBlankDeliveryRow = (row) =>
-  !row.billingAddress.trim() &&
-  !row.billingGstNo.trim() &&
+  !row.consigneeName.trim() &&
   !row.shippingAddress.trim() &&
   !row.shippingGst.trim() &&
-  String(row.qty).trim() === '';
+  !row.grade.trim() &&
+  !row.section.trim() &&
+  row.lots.every(isBlankLot);
+
+const getRowQty = (row) => row.lots.reduce((acc, lot) => acc + (parseFloat(lot.qty) || 0), 0);
 
 // sarthakProject: Sarthak TMT project order (Project Manager only) -> order id OR/<FY>/SAR/<n>, brand_type 'Sarthak'
 // headerSlot: optional content shown at the top of the form (e.g. Standard / Project order switch)
@@ -87,7 +100,9 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
   const [specification, setSpecification] = useState('');
   const [previewOrderId, setPreviewOrderId] = useState('');
   const [loading, setLoading] = useState(false);
-  // Billing / shipping records for delivery_details jsonb (shown once a party name is entered)
+  // Buyer (once) and consignee records for delivery_details jsonb (shown once a party name is entered)
+  const [buyerAddress, setBuyerAddress] = useState('');
+  const [buyerGstNo, setBuyerGstNo] = useState('');
   const [deliveryRows, setDeliveryRows] = useState([emptyDeliveryRow()]);
   const showDeliveryDetails = !hidePartyField && partyName.trim() !== '';
 
@@ -119,6 +134,8 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
       setPartyName('');
       setPoNumber('');
       setSpecification('');
+      setBuyerAddress('');
+      setBuyerGstNo('');
       setDeliveryRows([emptyDeliveryRow()]);
       const initialProducts = isJSWFirm
         ? JSW_ONE_PRODUCTS
@@ -243,9 +260,35 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
     );
   };
 
+  const handleAddLot = (rowIndex) => {
+    setDeliveryRows((prev) =>
+      prev.map((row, idx) => (idx === rowIndex ? { ...row, lots: [...row.lots, emptyLot()] } : row))
+    );
+  };
+
+  const handleRemoveLot = (rowIndex, lotIndex) => {
+    setDeliveryRows((prev) =>
+      prev.map((row, idx) =>
+        idx === rowIndex && row.lots.length > 1
+          ? { ...row, lots: row.lots.filter((_, li) => li !== lotIndex) }
+          : row
+      )
+    );
+  };
+
+  const handleLotChange = (rowIndex, lotIndex, field, value) => {
+    setDeliveryRows((prev) =>
+      prev.map((row, idx) =>
+        idx === rowIndex
+          ? { ...row, lots: row.lots.map((lot, li) => (li === lotIndex ? { ...lot, [field]: value } : lot)) }
+          : row
+      )
+    );
+  };
+
   // Calculations
   const totalQty = items.reduce((acc, it) => acc + (parseFloat(it.qty) || 0), 0);
-  const deliveryQty = deliveryRows.reduce((acc, row) => acc + (parseFloat(row.qty) || 0), 0);
+  const deliveryQty = deliveryRows.reduce((acc, row) => acc + getRowQty(row), 0);
   const totalValue = items.reduce(
     (acc, it) => acc + (parseFloat(it.qty) || 0) * (parseFloat(it.rate) || 0),
     0
@@ -296,40 +339,78 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
       return;
     }
 
-    // Billing / shipping records: fully blank rows are skipped, filled rows must be complete and valid
+    // Buyer & consignee records: fully blank consignee rows are skipped, filled rows must be complete and valid
     const filledDeliveryRows = showDeliveryDetails
       ? deliveryRows.filter((row) => !isBlankDeliveryRow(row))
       : [];
-    for (let i = 0; i < filledDeliveryRows.length; i++) {
-      const row = filledDeliveryRows[i];
-      const label = `Delivery record ${i + 1}`;
-      if (!row.billingAddress.trim()) {
-        alert(`${label}: please enter the Billing Address.`);
+    const buyerAddressValue = buyerAddress.trim();
+    const buyerGstValue = buyerGstNo.trim();
+    if (showDeliveryDetails && (buyerAddressValue || buyerGstValue) && filledDeliveryRows.length === 0) {
+      alert('Please add at least one Consignee record for the Buyer details entered.');
+      return;
+    }
+    if (filledDeliveryRows.length > 0) {
+      if (!buyerAddressValue) {
+        alert('Please enter the Buyer Address.');
         return;
       }
-      if (!row.shippingAddress.trim()) {
-        alert(`${label}: please enter the Shipping Address.`);
+      if (buyerAddressValue.length > ADDRESS_MAX_LENGTH) {
+        alert(`Buyer Address must be ${ADDRESS_MAX_LENGTH} characters or fewer.`);
         return;
       }
-      if (row.billingAddress.trim().length > ADDRESS_MAX_LENGTH || row.shippingAddress.trim().length > ADDRESS_MAX_LENGTH) {
-        alert(`${label}: addresses must be ${ADDRESS_MAX_LENGTH} characters or fewer.`);
-        return;
-      }
-      if (row.billingGstNo.trim() && !GSTIN_REGEX.test(row.billingGstNo.trim())) {
-        alert(`${label}: Billing GST No. is not a valid 15-character GSTIN.`);
-        return;
-      }
-      if (row.shippingGst.trim() && !GSTIN_REGEX.test(row.shippingGst.trim())) {
-        alert(`${label}: Shipping GST No. is not a valid 15-character GSTIN.`);
-        return;
-      }
-      const q = parseFloat(row.qty);
-      if (isNaN(q) || q <= 0) {
-        alert(`${label}: please enter a valid positive quantity (> 0 MT).`);
+      if (buyerGstValue && !GSTIN_REGEX.test(buyerGstValue)) {
+        alert('Buyer GST No. is not a valid 15-character GSTIN.');
         return;
       }
     }
-    const filledDeliveryQty = filledDeliveryRows.reduce((acc, row) => acc + (parseFloat(row.qty) || 0), 0);
+    for (let i = 0; i < filledDeliveryRows.length; i++) {
+      const row = filledDeliveryRows[i];
+      const label = `Consignee record ${i + 1}`;
+      if (!row.shippingAddress.trim()) {
+        alert(`${label}: please enter the Consignee Address.`);
+        return;
+      }
+      if (row.consigneeName.trim().length > CONSIGNEE_NAME_MAX_LENGTH) {
+        alert(`${label}: Consignee Name must be ${CONSIGNEE_NAME_MAX_LENGTH} characters or fewer.`);
+        return;
+      }
+      if (row.shippingAddress.trim().length > ADDRESS_MAX_LENGTH) {
+        alert(`${label}: address must be ${ADDRESS_MAX_LENGTH} characters or fewer.`);
+        return;
+      }
+      if (row.shippingGst.trim() && !GSTIN_REGEX.test(row.shippingGst.trim())) {
+        alert(`${label}: Consignee GST No. is not a valid 15-character GSTIN.`);
+        return;
+      }
+      if (row.grade.trim().length > SHORT_TEXT_MAX_LENGTH || row.section.trim().length > SHORT_TEXT_MAX_LENGTH) {
+        alert(`${label}: Grade and Section must be ${SHORT_TEXT_MAX_LENGTH} characters or fewer.`);
+        return;
+      }
+      const filledLots = row.lots.filter((lot) => !isBlankLot(lot));
+      if (filledLots.length === 0) {
+        alert(`${label}: please add at least one lot with its quantity.`);
+        return;
+      }
+      for (let j = 0; j < filledLots.length; j++) {
+        const lot = filledLots[j];
+        const lotLabel = `${label}, lot ${j + 1}`;
+        const q = parseFloat(lot.qty);
+        if (isNaN(q) || q <= 0) {
+          alert(`${lotLabel}: please enter a valid positive quantity (> 0 MT).`);
+          return;
+        }
+        if (lot.lotNo.trim().length > SHORT_TEXT_MAX_LENGTH) {
+          alert(`${lotLabel}: Lot No must be ${SHORT_TEXT_MAX_LENGTH} characters or fewer.`);
+          return;
+        }
+        // yyyy-mm-dd strings from date inputs compare correctly as text
+        if (lot.startDate && lot.endDate && lot.endDate < lot.startDate) {
+          alert(`${lotLabel}: End Date cannot be before Start Date.`);
+          return;
+        }
+      }
+    }
+    const filledDeliveryQty = filledDeliveryRows.reduce((acc, row) => acc + getRowQty(row), 0);
     if (filledDeliveryQty - totalQty > 0.001) {
       alert(
         `Delivery quantity (${filledDeliveryQty.toFixed(2)} MT) cannot exceed the total order quantity (${totalQty.toFixed(2)} MT).`
@@ -361,17 +442,36 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
         totalValue: Number(totalValue.toFixed(2)),
       };
 
-      // delivery_details jsonb: { "1": { billing_address, billing_address_gst_no, shipping_address, shipping_gst, qty }, "2": {...} }
+      // delivery_details jsonb:
+      // { "1": { billing_address, billing_address_gst_no, consignee_name, shipping_address, shipping_gst, grade, section, qty,
+      //          lots: { "1": { lot_no, qty, start_date, end_date }, ... } }, "2": {...} }
+      // The buyer (billing) entered once is written into every consignee record; qty is the total of its lots
       const deliveryDetailsPayload = filledDeliveryRows.length
         ? Object.fromEntries(
           filledDeliveryRows.map((row, idx) => [
             String(idx + 1),
             {
-              billing_address: row.billingAddress.trim(),
-              billing_address_gst_no: row.billingGstNo.trim() || null,
+              billing_address: buyerAddressValue,
+              billing_address_gst_no: buyerGstValue || null,
+              consignee_name: row.consigneeName.trim() || null,
               shipping_address: row.shippingAddress.trim(),
               shipping_gst: row.shippingGst.trim() || null,
-              qty: Number((parseFloat(row.qty) || 0).toFixed(2)),
+              grade: row.grade.trim() || null,
+              section: row.section.trim() || null,
+              qty: Number(getRowQty(row).toFixed(2)),
+              lots: Object.fromEntries(
+                row.lots
+                  .filter((lot) => !isBlankLot(lot))
+                  .map((lot, li) => [
+                    String(li + 1),
+                    {
+                      lot_no: lot.lotNo.trim() || null,
+                      qty: Number((parseFloat(lot.qty) || 0).toFixed(2)),
+                      start_date: lot.startDate || null,
+                      end_date: lot.endDate || null,
+                    },
+                  ])
+              ),
             },
           ])
         )
@@ -632,14 +732,46 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
           </div>
         </div>
 
-        {/* Billing / Shipping records (saved in delivery_details jsonb), shown once a party name is entered */}
+        {/* Buyer (entered once) & Consignee records (saved in delivery_details jsonb), shown once a party name is entered */}
         {showDeliveryDetails && (
           <div className="space-y-2 pt-2 border-t border-slate-200">
+            <label className="text-xs font-bold text-slate-800 uppercase flex items-center gap-1.5">
+              <MapPin className="w-3.5 h-3.5 text-[#a81b1e]" />
+              Buyer & Consignee Details
+            </label>
+
+            {/* Buyer: same for every consignee record */}
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 p-2.5 rounded-lg border border-slate-200 bg-white">
+              <div className="sm:col-span-8">
+                <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">
+                  Buyer Address
+                </label>
+                <input
+                  type="text"
+                  maxLength={ADDRESS_MAX_LENGTH}
+                  placeholder="Buyer / billing address"
+                  value={buyerAddress}
+                  onChange={(e) => setBuyerAddress(e.target.value)}
+                  className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-[#a81b1e]"
+                />
+              </div>
+              <div className="sm:col-span-4">
+                <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">
+                  Buyer GST No.
+                </label>
+                <input
+                  type="text"
+                  maxLength={15}
+                  placeholder="e.g. 22AAAAA0000A1Z5"
+                  value={buyerGstNo}
+                  onChange={(e) => setBuyerGstNo(e.target.value.toUpperCase().replace(/\s/g, ''))}
+                  className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 font-mono focus:outline-none focus:border-[#a81b1e]"
+                />
+              </div>
+            </div>
+
             <div className="flex items-center justify-between">
-              <label className="text-xs font-bold text-slate-800 uppercase flex items-center gap-1.5">
-                <MapPin className="w-3.5 h-3.5 text-[#a81b1e]" />
-                Billing & Shipping Details
-              </label>
+              <span className="text-[11px] font-bold text-slate-600 uppercase">Consignees</span>
               <button
                 type="button"
                 onClick={handleAddDeliveryRow}
@@ -667,54 +799,37 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
                     )}
                   </div>
 
-                  {/* Row 1: Billing */}
-                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
-                    <div className="sm:col-span-8">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">
-                        Billing Address
-                      </label>
-                      <input
-                        type="text"
-                        maxLength={ADDRESS_MAX_LENGTH}
-                        placeholder="Billing address"
-                        value={row.billingAddress}
-                        onChange={(e) => handleDeliveryChange(idx, 'billingAddress', e.target.value)}
-                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-[#a81b1e]"
-                      />
-                    </div>
-                    <div className="sm:col-span-4">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">
-                        Billing GST No.
-                      </label>
-                      <input
-                        type="text"
-                        maxLength={15}
-                        placeholder="e.g. 22AAAAA0000A1Z5"
-                        value={row.billingGstNo}
-                        onChange={(e) => handleDeliveryChange(idx, 'billingGstNo', e.target.value.toUpperCase().replace(/\s/g, ''))}
-                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 font-mono focus:outline-none focus:border-[#a81b1e]"
-                      />
-                    </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">
+                      Consignee Name <span className="normal-case font-medium text-slate-400">(optional)</span>
+                    </label>
+                    <input
+                      type="text"
+                      maxLength={CONSIGNEE_NAME_MAX_LENGTH}
+                      placeholder="Consignee / site name"
+                      value={row.consigneeName}
+                      onChange={(e) => handleDeliveryChange(idx, 'consigneeName', e.target.value)}
+                      className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-[#a81b1e]"
+                    />
                   </div>
 
-                  {/* Row 2: Shipping */}
                   <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
                     <div className="sm:col-span-6">
                       <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">
-                        Shipping Address
+                        Consignee Address
                       </label>
                       <input
                         type="text"
                         maxLength={ADDRESS_MAX_LENGTH}
-                        placeholder="Shipping / site address"
+                        placeholder="Consignee / site address"
                         value={row.shippingAddress}
                         onChange={(e) => handleDeliveryChange(idx, 'shippingAddress', e.target.value)}
                         className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-[#a81b1e]"
                       />
                     </div>
-                    <div className="sm:col-span-4">
+                    <div className="sm:col-span-6">
                       <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">
-                        Shipping GST No.
+                        Consignee GST No.
                       </label>
                       <input
                         type="text"
@@ -725,20 +840,110 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
                         className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 font-mono focus:outline-none focus:border-[#a81b1e]"
                       />
                     </div>
-                    <div className="sm:col-span-2">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5 text-right">
-                        Qty (MT)
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">
+                        Grade
                       </label>
                       <input
-                        type="number"
-                        step="any"
-                        min="0"
-                        placeholder="MT"
-                        value={row.qty}
-                        onChange={(e) => handleDeliveryChange(idx, 'qty', e.target.value)}
-                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 text-right focus:outline-none focus:border-[#a81b1e]"
+                        type="text"
+                        maxLength={SHORT_TEXT_MAX_LENGTH}
+                        placeholder="e.g. Fe 550D"
+                        value={row.grade}
+                        onChange={(e) => handleDeliveryChange(idx, 'grade', e.target.value)}
+                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-[#a81b1e]"
                       />
                     </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">
+                        Section
+                      </label>
+                      <input
+                        type="text"
+                        maxLength={SHORT_TEXT_MAX_LENGTH}
+                        placeholder="e.g. 12mm"
+                        value={row.section}
+                        onChange={(e) => handleDeliveryChange(idx, 'section', e.target.value)}
+                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-[#a81b1e]"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Lots: the consignee's qty is split into lots */}
+                  <div className="space-y-1.5 p-2 rounded-md border border-slate-200 bg-white">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold text-slate-600 uppercase">
+                        Qty Lots — Total {getRowQty(row).toFixed(2)} MT
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleAddLot(idx)}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold text-[#a81b1e] bg-red-50 hover:bg-red-100 border border-red-200 transition cursor-pointer"
+                      >
+                        <Plus className="w-3 h-3" />
+                        Add Lot
+                      </button>
+                    </div>
+                    {row.lots.map((lot, li) => (
+                      <div key={li} className="grid grid-cols-2 sm:grid-cols-12 gap-1.5 items-end">
+                        <div className="sm:col-span-3">
+                          <label className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">Lot No</label>
+                          <input
+                            type="text"
+                            maxLength={SHORT_TEXT_MAX_LENGTH}
+                            placeholder={`Lot ${li + 1}`}
+                            value={lot.lotNo}
+                            onChange={(e) => handleLotChange(idx, li, 'lotNo', e.target.value)}
+                            className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-[#a81b1e]"
+                          />
+                        </div>
+                        <div className="sm:col-span-2">
+                          <label className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5 text-right">Qty (MT)</label>
+                          <input
+                            type="number"
+                            step="any"
+                            min="0"
+                            placeholder="MT"
+                            value={lot.qty}
+                            onChange={(e) => handleLotChange(idx, li, 'qty', e.target.value)}
+                            className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 text-right focus:outline-none focus:border-[#a81b1e]"
+                          />
+                        </div>
+                        <div className="sm:col-span-3">
+                          <label className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">Start Date</label>
+                          <input
+                            type="date"
+                            value={lot.startDate}
+                            onChange={(e) => handleLotChange(idx, li, 'startDate', e.target.value)}
+                            className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-[#a81b1e]"
+                          />
+                        </div>
+                        <div className="sm:col-span-3">
+                          <label className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">End Date</label>
+                          <input
+                            type="date"
+                            min={lot.startDate || undefined}
+                            value={lot.endDate}
+                            onChange={(e) => handleLotChange(idx, li, 'endDate', e.target.value)}
+                            className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-[#a81b1e]"
+                          />
+                        </div>
+                        <div className="sm:col-span-1 flex justify-end pb-1">
+                          {row.lots.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveLot(idx, li)}
+                              className="text-slate-400 hover:text-red-600 p-1 rounded transition cursor-pointer"
+                              title="Remove lot"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               ))}

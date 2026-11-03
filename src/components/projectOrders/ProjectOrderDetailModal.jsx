@@ -135,22 +135,23 @@ export const ProjectOrderDetailModal = ({ isOpen, onClose, order }) => {
           )}
         </div>
 
-        {/* Billing & Shipping records (delivery_details) */}
+        {/* Buyer & Consignee records (delivery_details) */}
         {deliveries.length > 0 && (
           <div className="space-y-2">
             <h4 className="font-bold text-slate-800 uppercase text-[11px] flex items-center gap-1.5">
               <MapPin className="w-3.5 h-3.5 text-[#a81b1e]" />
-              Billing & Shipping Details ({deliveries.length})
+              Buyer & Consignee Details ({deliveries.length})
             </h4>
             {deliveries.map((d, idx) => (
               <div key={idx} className="p-2.5 rounded-lg border border-slate-200 bg-slate-50/70 grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <div>
-                  <span className="text-[9px] uppercase text-slate-400 block font-bold">Billing Address</span>
+                  <span className="text-[9px] uppercase text-slate-400 block font-bold">Buyer Address</span>
                   <p className="font-semibold text-slate-900 break-words">{d.billing_address || '—'}</p>
                   <p className="text-[11px] font-mono text-slate-600">GST: {d.billing_address_gst_no || '—'}</p>
                 </div>
                 <div>
-                  <span className="text-[9px] uppercase text-slate-400 block font-bold">Shipping Address</span>
+                  <span className="text-[9px] uppercase text-slate-400 block font-bold">Consignee</span>
+                  {d.consignee_name && <p className="font-bold text-slate-900 break-words">{d.consignee_name}</p>}
                   <p className="font-semibold text-slate-900 break-words">{d.shipping_address || '—'}</p>
                   <p className="text-[11px] font-mono text-slate-600">GST: {d.shipping_gst || '—'}</p>
                   <p className="text-[11px] font-bold text-slate-800">Qty: {(parseFloat(d.qty) || 0).toFixed(2)} MT</p>

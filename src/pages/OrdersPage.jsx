@@ -179,6 +179,21 @@ export const OrdersPage = () => {
     );
   });
 
+  // Consignee / grade / section / lot columns exist only where orders carry a party (delivery_details)
+  const showDeliveryColumns = !hidePartyColumn;
+
+  // Summary of delivery_details for the table: consignees, distinct grades & sections, all lots
+  const getDeliverySummary = (o) => {
+    const deliveries = Array.isArray(o.deliveries) ? o.deliveries : [];
+    const distinct = (key) => [...new Set(deliveries.map((d) => d[key]).filter(Boolean))];
+    return {
+      consignees: deliveries.map((d) => d.consignee_name || d.shipping_address).filter(Boolean),
+      grades: distinct('grade'),
+      sections: distinct('section'),
+      lots: deliveries.flatMap((d) => (Array.isArray(d.lotsList) ? d.lotsList : [])),
+    };
+  };
+
   const filteredOrders = searchedOrders.filter(matchesStatus);
   const filteredProjectOrders = searchedProjectOrders.filter(matchesStatus);
 
@@ -404,6 +419,14 @@ export const OrdersPage = () => {
                     <th className="py-3 px-3.5">PO Number</th>
                     <th className="py-3 px-3.5">{hideSpecificationColumn ? 'Brand / Series' : 'Sizes'}</th>
                     <th className="py-3 px-3.5">Products Summary</th>
+                    {showDeliveryColumns && (
+                      <>
+                        <th className="py-3 px-3.5">Consignee</th>
+                        <th className="py-3 px-3.5">Grade</th>
+                        <th className="py-3 px-3.5">Section</th>
+                        <th className="py-3 px-3.5">Lots</th>
+                      </>
+                    )}
                     <th className="py-3 px-3.5 text-right">Tonnage</th>
                     <th className="py-3 px-3.5 text-right">Total Value</th>
                     <th className="py-3 px-3.5 text-center">Status</th>
@@ -418,6 +441,10 @@ export const OrdersPage = () => {
                       <td className="py-3 px-3.5"><div className="h-3.5 w-16 bg-slate-100 rounded font-mono" /></td>
                       <td className="py-3 px-3.5"><div className="h-5 w-20 bg-slate-200 rounded" /></td>
                       <td className="py-3 px-3.5"><div className="h-3.5 w-36 bg-slate-100 rounded" /></td>
+                      {showDeliveryColumns &&
+                        Array.from({ length: 4 }).map((__, ci) => (
+                          <td key={ci} className="py-3 px-3.5"><div className="h-3.5 w-16 bg-slate-100 rounded" /></td>
+                        ))}
                       <td className="py-3 px-3.5 text-right"><div className="h-3.5 w-14 bg-slate-200 rounded ml-auto" /></td>
                       <td className="py-3 px-3.5 text-right"><div className="h-3.5 w-16 bg-slate-200 rounded ml-auto" /></td>
                       <td className="py-3 px-3.5 text-center"><div className="h-4 w-14 bg-slate-100 rounded mx-auto" /></td>
@@ -572,6 +599,14 @@ export const OrdersPage = () => {
                       <th className="py-3 px-3.5">PO Number</th>
                       <th className="py-3 px-3.5">{hideSpecificationColumn ? 'Brand / Series' : 'Sizes'}</th>
                       <th className="py-3 px-3.5">Products Summary</th>
+                    {showDeliveryColumns && (
+                      <>
+                        <th className="py-3 px-3.5">Consignee</th>
+                        <th className="py-3 px-3.5">Grade</th>
+                        <th className="py-3 px-3.5">Section</th>
+                        <th className="py-3 px-3.5">Lots</th>
+                      </>
+                    )}
                       <th className="py-3 px-3.5 text-right">Tonnage</th>
                       <th className="py-3 px-3.5 text-right">Total Value</th>
                       <th className="py-3 px-3.5 text-center">Status</th>
@@ -586,6 +621,7 @@ export const OrdersPage = () => {
                         .map((it) => `${it.productName} (${it.size})`)
                         .join(', ');
                       const orderSizes = [...new Set(items.map((it) => it.size).filter(Boolean))];
+                      const delivery = showDeliveryColumns ? getDeliverySummary(o) : null;
                       const orderSubtype =
                         o.product_details?.subtype ||
                         o.product_details?.brand ||
@@ -660,6 +696,53 @@ export const OrdersPage = () => {
                               )}
                             </span>
                           </td>
+
+                          {delivery && (
+                            <>
+                              <td className="py-3 px-3.5 text-slate-700 text-[11px]">
+                                {delivery.consignees.length ? (
+                                  <span className="truncate max-w-[10rem] block" title={delivery.consignees.join(', ')}>
+                                    {delivery.consignees[0]}
+                                    {delivery.consignees.length > 1 && (
+                                      <span className="text-slate-400"> +{delivery.consignees.length - 1} more</span>
+                                    )}
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-400">—</span>
+                                )}
+                              </td>
+                              <td className="py-3 px-3.5 text-slate-700 text-[11px]">
+                                {delivery.grades.length ? delivery.grades.join(', ') : <span className="text-slate-400">—</span>}
+                              </td>
+                              <td className="py-3 px-3.5 text-slate-700 text-[11px]">
+                                {delivery.sections.length ? delivery.sections.join(', ') : <span className="text-slate-400">—</span>}
+                              </td>
+                              <td className="py-3 px-3.5 text-[11px]">
+                                {delivery.lots.length ? (
+                                  <div className="space-y-0.5 min-w-[11rem]">
+                                    {delivery.lots.slice(0, 2).map((lot, li) => (
+                                      <p key={li} className="whitespace-nowrap text-slate-700">
+                                        <span className="font-bold">{lot.lot_no || `Lot ${li + 1}`}</span>
+                                        {' · '}
+                                        <span className="font-mono">{(parseFloat(lot.qty) || 0).toFixed(2)} MT</span>
+                                        {(lot.start_date || lot.end_date) && (
+                                          <span className="text-slate-400 font-mono">
+                                            {' · '}
+                                            {lot.start_date || '—'} → {lot.end_date || '—'}
+                                          </span>
+                                        )}
+                                      </p>
+                                    ))}
+                                    {delivery.lots.length > 2 && (
+                                      <p className="text-slate-400">+{delivery.lots.length - 2} more</p>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-slate-400">—</span>
+                                )}
+                              </td>
+                            </>
+                          )}
 
                           <td className="py-3 px-3.5 text-right font-mono font-bold text-slate-900">
                             {(o.total_qty || 0).toFixed(2)} MT

@@ -331,13 +331,16 @@ export const projectOrdersApi = {
           deliveryDetails = null;
         }
       }
-      const deliveries =
-        deliveryDetails && typeof deliveryDetails === 'object' && !Array.isArray(deliveryDetails)
-          ? Object.keys(deliveryDetails)
+      // Numbered-key object { "1": {...}, "2": {...} } -> ordered list
+      const toOrderedList = (obj) =>
+        obj && typeof obj === 'object' && !Array.isArray(obj)
+          ? Object.keys(obj)
             .sort((a, b) => (parseInt(a, 10) || 0) - (parseInt(b, 10) || 0))
-            .map((key) => deliveryDetails[key])
-            .filter((d) => d && typeof d === 'object')
+            .map((key) => obj[key])
+            .filter((v) => v && typeof v === 'object')
           : [];
+      // Each consignee's lots { "1": { lot_no, qty, start_date, end_date } } -> lotsList
+      const deliveries = toOrderedList(deliveryDetails).map((d) => ({ ...d, lotsList: toOrderedList(d.lots) }));
 
       return {
         ...o,
