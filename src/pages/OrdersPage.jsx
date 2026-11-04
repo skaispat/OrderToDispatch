@@ -185,12 +185,15 @@ export const OrdersPage = () => {
   // Summary of delivery_details for the table: consignees, distinct grades & sections, all lots
   const getDeliverySummary = (o) => {
     const deliveries = Array.isArray(o.deliveries) ? o.deliveries : [];
-    const distinct = (key) => [...new Set(deliveries.map((d) => d[key]).filter(Boolean))];
+    const lots = deliveries.flatMap((d) => (Array.isArray(d.lotsList) ? d.lotsList : []));
+    // Grade / section live on each lot (older orders kept them on the consignee)
+    const distinct = (key) =>
+      [...new Set([...lots.map((l) => l[key]), ...deliveries.map((d) => d[key])].filter(Boolean))];
     return {
       consignees: deliveries.map((d) => d.consignee_name || d.shipping_address).filter(Boolean),
       grades: distinct('grade'),
       sections: distinct('section'),
-      lots: deliveries.flatMap((d) => (Array.isArray(d.lotsList) ? d.lotsList : [])),
+      lots,
     };
   };
 

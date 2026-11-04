@@ -400,6 +400,9 @@ export const projectOrdersApi = {
         try {
           localStorage.removeItem(LOCAL_STORAGE_KEY);
         } catch (e) {}
+        if (dbPayload.party_name) {
+          await this.savePartyDetails(data.id, dbPayload.party_name);
+        }
         return data;
       }
 
@@ -414,6 +417,48 @@ export const projectOrdersApi = {
       throw new Error(error?.message || 'Could not save the project order. Please try again.');
     }
     throw new Error('Could not get a free order number. Please try again.');
+  },
+
+  /**
+   * Distinct party / client names already saved in project_party_details, sorted A–Z
+   * (case-insensitive duplicates collapse to the first spelling found).
+   */
+  async getPartyNames() {
+    const rows = await fetchAllRows(() =>
+      supabase
+        .from('project_party_details')
+        .select('party_name', { count: 'exact' })
+        .not('party_name', 'is', null)
+        .order('id', { ascending: false })
+    );
+    const byKey = new Map();
+    for (const row of rows || []) {
+      const name = String(row?.party_name || '').trim();
+      if (name && !byKey.has(name.toLowerCase())) byKey.set(name.toLowerCase(), name);
+    }
+    return [...byKey.values()].sort((a, b) => a.localeCompare(b));
+  },
+
+  /**
+   * Records the party / client of a project order in project_party_details (order_id -> project_orders.id).
+   * If this fails, the just-created order is removed so the user can simply save again without a duplicate.
+   */
+  async savePartyDetails(projectOrderDbId, partyName) {
+    const { error } = await supabase
+      .from('project_party_details')
+      .insert([{ order_id: projectOrderDbId, party_name: partyName }]);
+    if (!error) return;
+
+    console.error('[projectOrdersApi] Failed to save party details:', error);
+    const { error: rollbackError } = await supabase.from('project_orders').delete().eq('id', projectOrderDbId);
+    if (rollbackError) {
+      // Order stays saved; only its project_party_details row is missing
+      console.error('[projectOrdersApi] Could not roll back project order', projectOrderDbId, rollbackError);
+      throw new Error(
+        `The order was saved but its party details were not (${error.message}). Please do not save it again — contact the admin to add the party details.`
+      );
+    }
+    throw new Error(`Could not save the party details: ${error.message}. The order was not saved, please try again.`);
   },
 
   /**

@@ -28,21 +28,46 @@ import {
 const GSTIN_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 const ADDRESS_MAX_LENGTH = 500;
 const CONSIGNEE_NAME_MAX_LENGTH = 200;
-const SHORT_TEXT_MAX_LENGTH = 100; // grade, section, lot no
+const SHORT_TEXT_MAX_LENGTH = 100; // lot no, grade, section
+const DEFAULT_GST_PERCENT = '18';
 
-// Delivery lot of a consignee: its qty is part of the consignee's total qty
-const emptyLot = () => ({ lotNo: '', qty: '', startDate: '', endDate: '' });
+// Delivery lot of a consignee: carries the product, qty and pricing (lots are the order's line items)
+const emptyLot = () => ({
+  lotNo: '',
+  grade: '',
+  section: '',
+  qty: '',
+  rate: '',
+  gstPercent: DEFAULT_GST_PERCENT,
+  startDate: '',
+  endDate: '',
+});
 
+// GST % is pre-filled, so it does not make a lot "filled" on its own
 const isBlankLot = (lot) =>
-  !lot.lotNo.trim() && String(lot.qty).trim() === '' && !lot.startDate && !lot.endDate;
+  !lot.lotNo.trim() &&
+  !lot.grade.trim() &&
+  !lot.section.trim() &&
+  String(lot.qty).trim() === '' &&
+  String(lot.rate).trim() === '' &&
+  !lot.startDate &&
+  !lot.endDate;
+
+// Lot value: qty x price, GST on top
+const getLotAmounts = (lot) => {
+  const qty = parseFloat(lot.qty) || 0;
+  const rate = parseFloat(lot.rate) || 0;
+  const gstPercent = parseFloat(lot.gstPercent) || 0;
+  const taxable = qty * rate;
+  const gstAmount = (taxable * gstPercent) / 100;
+  return { qty, rate, gstPercent, taxable, gstAmount, total: taxable + gstAmount };
+};
 
 // Consignee (ship-to) record; the buyer (bill-to) is entered once for the whole order
 const emptyDeliveryRow = () => ({
   consigneeName: '',
   shippingAddress: '',
   shippingGst: '',
-  grade: '',
-  section: '',
   lots: [emptyLot()],
 });
 
@@ -50,11 +75,11 @@ const isBlankDeliveryRow = (row) =>
   !row.consigneeName.trim() &&
   !row.shippingAddress.trim() &&
   !row.shippingGst.trim() &&
-  !row.grade.trim() &&
-  !row.section.trim() &&
   row.lots.every(isBlankLot);
 
 const getRowQty = (row) => row.lots.reduce((acc, lot) => acc + (parseFloat(lot.qty) || 0), 0);
+
+const round2 = (n) => Number((Number.isFinite(n) ? n : 0).toFixed(2));
 
 // sarthakProject: Sarthak TMT project order (Project Manager only) -> order id OR/<FY>/SAR/<n>, brand_type 'Sarthak'
 // headerSlot: optional content shown at the top of the form (e.g. Standard / Project order switch)
@@ -81,14 +106,15 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
   // Whether the firm uses a single unified dropdown with full ISI specification
   const hasUnifiedDropdown = isJSWFirm || isEssarFirm;
 
-  // Hide Specification field for JSW and Essar firms as requested
-  const hideSpecificationField = isJSWFirm || isEssarFirm;
-
   // Hide Party / Client field for firm 2 and firm 6 (JSW and ESSAR)
   const hidePartyField =
     [2, 6].includes(Number(orderFirmId)) ||
     isEssarFirm ||
     isJSWFirm;
+
+  // Party-based orders take their products, qty and pricing from the consignee lots
+  // (no separate Item & Description section); JSW / ESSAR keep the product line items
+  const useLotPricing = !hidePartyField;
 
   // Modal Step: for JSW, start with 'select_brand', then go to 'form'. For Essar & others, go directly to 'form'
   const [modalStep, setModalStep] = useState(isJSWFirm ? 'select_brand' : 'form');
@@ -97,13 +123,14 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
   const [orderDate, setOrderDate] = useState(todayStr);
   const [partyName, setPartyName] = useState('');
   const [poNumber, setPoNumber] = useState('');
-  const [specification, setSpecification] = useState('');
   const [previewOrderId, setPreviewOrderId] = useState('');
   const [loading, setLoading] = useState(false);
   // Buyer (once) and consignee records for delivery_details jsonb (shown once a party name is entered)
   const [buyerAddress, setBuyerAddress] = useState('');
   const [buyerGstNo, setBuyerGstNo] = useState('');
   const [deliveryRows, setDeliveryRows] = useState([emptyDeliveryRow()]);
+  // Saved party names (project_party_details) offered in the Party / Client field
+  const [partyOptions, setPartyOptions] = useState([]);
   const showDeliveryDetails = !hidePartyField && partyName.trim() !== '';
 
   const getSubtypeProducts = (subtype = selectedSubtype) => {
@@ -133,7 +160,6 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
       setOrderDate(todayStr);
       setPartyName('');
       setPoNumber('');
-      setSpecification('');
       setBuyerAddress('');
       setBuyerGstNo('');
       setDeliveryRows([emptyDeliveryRow()]);
@@ -152,6 +178,21 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
       ]);
     }
   }, [isOpen, isJSWFirm, isEssarFirm, todayStr]);
+
+  // Load saved party names each time the form opens (a failed load leaves the field as plain text input)
+  useEffect(() => {
+    if (!isOpen || hidePartyField) return;
+    let isSubscribed = true;
+    projectOrdersApi
+      .getPartyNames()
+      .then((names) => {
+        if (isSubscribed) setPartyOptions(names);
+      })
+      .catch((err) => console.warn('Could not load saved party names:', err));
+    return () => {
+      isSubscribed = false;
+    };
+  }, [isOpen, hidePartyField]);
 
   // Update preview order ID whenever orderDate or firm_id changes (with subscription tracking to prevent race conditions)
   useEffect(() => {
@@ -286,13 +327,19 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
     );
   };
 
-  // Calculations
-  const totalQty = items.reduce((acc, it) => acc + (parseFloat(it.qty) || 0), 0);
-  const deliveryQty = deliveryRows.reduce((acc, row) => acc + getRowQty(row), 0);
-  const totalValue = items.reduce(
-    (acc, it) => acc + (parseFloat(it.qty) || 0) * (parseFloat(it.rate) || 0),
-    0
-  );
+  // Lots of every consignee (only rows with data) — the order's line items for party-based orders
+  const filledLotsOf = (row) => row.lots.filter((lot) => !isBlankLot(lot));
+  const allLots = deliveryRows.flatMap(filledLotsOf);
+
+  // Calculations: from the lots for party-based orders, from the product line items otherwise
+  const totalQty = useLotPricing
+    ? allLots.reduce((acc, lot) => acc + getLotAmounts(lot).qty, 0)
+    : items.reduce((acc, it) => acc + (parseFloat(it.qty) || 0), 0);
+  const totalValue = useLotPricing
+    ? allLots.reduce((acc, lot) => acc + getLotAmounts(lot).taxable, 0)
+    : items.reduce((acc, it) => acc + (parseFloat(it.qty) || 0) * (parseFloat(it.rate) || 0), 0);
+  const totalGst = useLotPricing ? allLots.reduce((acc, lot) => acc + getLotAmounts(lot).gstAmount, 0) : 0;
+  const grandTotal = totalValue + totalGst;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -311,44 +358,41 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
       return;
     }
 
-    if (items.length === 0) {
-      alert('Please add at least one product item.');
-      return;
-    }
+    if (!useLotPricing) {
+      if (items.length === 0) {
+        alert('Please add at least one product item.');
+        return;
+      }
 
-    const invalidQtyItem = items.find((it) => {
-      const q = parseFloat(it.qty);
-      return isNaN(q) || q <= 0;
-    });
-    if (invalidQtyItem) {
-      alert('Please enter a valid positive quantity (> 0 MT) for all line items.');
-      return;
-    }
+      const invalidQtyItem = items.find((it) => {
+        const q = parseFloat(it.qty);
+        return isNaN(q) || q <= 0;
+      });
+      if (invalidQtyItem) {
+        alert('Please enter a valid positive quantity (> 0 MT) for all line items.');
+        return;
+      }
 
-    const invalidRateItem = items.find((it) => {
-      const r = parseFloat(it.rate);
-      return !isNaN(r) && r < 0;
-    });
-    if (invalidRateItem) {
-      alert('Rate per MT cannot be negative.');
-      return;
-    }
-
-    if (totalQty <= 0) {
-      alert('Total order quantity must be greater than zero.');
-      return;
+      const invalidRateItem = items.find((it) => {
+        const r = parseFloat(it.rate);
+        return !isNaN(r) && r < 0;
+      });
+      if (invalidRateItem) {
+        alert('Rate per MT cannot be negative.');
+        return;
+      }
     }
 
     // Buyer & consignee records: fully blank consignee rows are skipped, filled rows must be complete and valid
     const filledDeliveryRows = showDeliveryDetails
       ? deliveryRows.filter((row) => !isBlankDeliveryRow(row))
       : [];
-    const buyerAddressValue = buyerAddress.trim();
-    const buyerGstValue = buyerGstNo.trim();
-    if (showDeliveryDetails && (buyerAddressValue || buyerGstValue) && filledDeliveryRows.length === 0) {
-      alert('Please add at least one Consignee record for the Buyer details entered.');
+    if (useLotPricing && filledDeliveryRows.length === 0) {
+      alert('Please add at least one Consignee record with its lots.');
       return;
     }
+    const buyerAddressValue = buyerAddress.trim();
+    const buyerGstValue = buyerGstNo.trim();
     if (filledDeliveryRows.length > 0) {
       if (!buyerAddressValue) {
         alert('Please enter the Buyer Address.');
@@ -382,11 +426,7 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
         alert(`${label}: Consignee GST No. is not a valid 15-character GSTIN.`);
         return;
       }
-      if (row.grade.trim().length > SHORT_TEXT_MAX_LENGTH || row.section.trim().length > SHORT_TEXT_MAX_LENGTH) {
-        alert(`${label}: Grade and Section must be ${SHORT_TEXT_MAX_LENGTH} characters or fewer.`);
-        return;
-      }
-      const filledLots = row.lots.filter((lot) => !isBlankLot(lot));
+      const filledLots = filledLotsOf(row);
       if (filledLots.length === 0) {
         alert(`${label}: please add at least one lot with its quantity.`);
         return;
@@ -399,8 +439,18 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
           alert(`${lotLabel}: please enter a valid positive quantity (> 0 MT).`);
           return;
         }
-        if (lot.lotNo.trim().length > SHORT_TEXT_MAX_LENGTH) {
-          alert(`${lotLabel}: Lot No must be ${SHORT_TEXT_MAX_LENGTH} characters or fewer.`);
+        const r = parseFloat(lot.rate);
+        if (String(lot.rate).trim() !== '' && (isNaN(r) || r < 0)) {
+          alert(`${lotLabel}: Price per MT cannot be negative.`);
+          return;
+        }
+        const g = parseFloat(lot.gstPercent);
+        if (String(lot.gstPercent).trim() !== '' && (isNaN(g) || g < 0 || g > 100)) {
+          alert(`${lotLabel}: GST % must be between 0 and 100.`);
+          return;
+        }
+        if ([lot.lotNo, lot.grade, lot.section].some((v) => v.trim().length > SHORT_TEXT_MAX_LENGTH)) {
+          alert(`${lotLabel}: Lot No, Grade and Section must be ${SHORT_TEXT_MAX_LENGTH} characters or fewer.`);
           return;
         }
         // yyyy-mm-dd strings from date inputs compare correctly as text
@@ -410,41 +460,63 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
         }
       }
     }
-    const filledDeliveryQty = filledDeliveryRows.reduce((acc, row) => acc + getRowQty(row), 0);
-    if (filledDeliveryQty - totalQty > 0.001) {
-      alert(
-        `Delivery quantity (${filledDeliveryQty.toFixed(2)} MT) cannot exceed the total order quantity (${totalQty.toFixed(2)} MT).`
-      );
+
+    if (totalQty <= 0) {
+      alert('Total order quantity must be greater than zero.');
       return;
     }
 
     setLoading(true);
     try {
-      const sanitizedItems = items.map((it) => {
-        const q = parseFloat(it.qty) || 0;
-        const r = parseFloat(it.rate) || 0;
-        return {
-          productName: it.productName || 'TMT Rebar',
-          size: it.size || '12mm',
-          qty: q,
-          rate: r,
-          total: q * r,
-        };
-      });
+      // Line items in product_details (read by order lists and dispatch): built from the lots for party-based orders
+      const sanitizedItems = useLotPricing
+        ? filledDeliveryRows.flatMap((row) =>
+          filledLotsOf(row).map((lot) => {
+            const a = getLotAmounts(lot);
+            const grade = lot.grade.trim();
+            const section = lot.section.trim();
+            return {
+              productName: [grade, section].filter(Boolean).join(' ') || 'TMT Rebar',
+              grade: grade || null,
+              section: section || null,
+              lotNo: lot.lotNo.trim() || null,
+              consignee: row.consigneeName.trim() || row.shippingAddress.trim(),
+              qty: a.qty,
+              rate: a.rate,
+              total: round2(a.taxable),
+              gstPercent: a.gstPercent,
+              gstAmount: round2(a.gstAmount),
+              totalWithGst: round2(a.total),
+            };
+          })
+        )
+        : items.map((it) => {
+          const q = parseFloat(it.qty) || 0;
+          const r = parseFloat(it.rate) || 0;
+          return {
+            productName: it.productName || 'TMT Rebar',
+            size: it.size || '12mm',
+            qty: q,
+            rate: r,
+            total: q * r,
+          };
+        });
 
-      // Product Details & Indent Items and Specification stored in jsonb
+      // Product Details & Indent Items stored in jsonb (totalValue is before GST)
       const productDetailsPayload = {
         subtype: sarthakProject ? 'Sarthak TMT' : isJSWFirm ? selectedSubtype : isEssarFirm ? 'ESSAR Steel' : null,
         brand: sarthakProject ? 'Sarthak' : isJSWFirm ? selectedSubtype : isEssarFirm ? 'ESSAR' : null,
-        specification: hideSpecificationField ? null : (specification.trim() || null),
+        specification: null,
         items: sanitizedItems,
-        totalQty: Number(totalQty.toFixed(2)),
-        totalValue: Number(totalValue.toFixed(2)),
+        totalQty: round2(totalQty),
+        totalValue: round2(totalValue),
+        ...(useLotPricing ? { totalGst: round2(totalGst), totalValueWithGst: round2(grandTotal) } : {}),
       };
 
       // delivery_details jsonb:
-      // { "1": { billing_address, billing_address_gst_no, consignee_name, shipping_address, shipping_gst, grade, section, qty,
-      //          lots: { "1": { lot_no, qty, start_date, end_date }, ... } }, "2": {...} }
+      // { "1": { billing_address, billing_address_gst_no, consignee_name, shipping_address, shipping_gst, qty,
+      //          lots: { "1": { lot_no, grade, section, qty, price, gst_percent, gst_amount, total_price,
+      //                         start_date, end_date }, ... } }, "2": {...} }
       // The buyer (billing) entered once is written into every consignee record; qty is the total of its lots
       const deliveryDetailsPayload = filledDeliveryRows.length
         ? Object.fromEntries(
@@ -456,21 +528,26 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
               consignee_name: row.consigneeName.trim() || null,
               shipping_address: row.shippingAddress.trim(),
               shipping_gst: row.shippingGst.trim() || null,
-              grade: row.grade.trim() || null,
-              section: row.section.trim() || null,
-              qty: Number(getRowQty(row).toFixed(2)),
+              qty: round2(getRowQty(row)),
               lots: Object.fromEntries(
-                row.lots
-                  .filter((lot) => !isBlankLot(lot))
-                  .map((lot, li) => [
+                filledLotsOf(row).map((lot, li) => {
+                  const a = getLotAmounts(lot);
+                  return [
                     String(li + 1),
                     {
                       lot_no: lot.lotNo.trim() || null,
-                      qty: Number((parseFloat(lot.qty) || 0).toFixed(2)),
+                      grade: lot.grade.trim() || null,
+                      section: lot.section.trim() || null,
+                      qty: round2(a.qty),
+                      price: round2(a.rate),
+                      gst_percent: a.gstPercent,
+                      gst_amount: round2(a.gstAmount),
+                      total_price: round2(a.total),
                       start_date: lot.startDate || null,
                       end_date: lot.endDate || null,
                     },
-                  ])
+                  ];
+                })
               ),
             },
           ])
@@ -709,11 +786,19 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
               <input
                 type="text"
                 required={!hidePartyField}
-                placeholder="e.g. L&T Construction Ltd / Shapoorji Pallonji"
+                list="project-party-names"
+                autoComplete="off"
+                placeholder="Select a saved party or type a new one"
                 value={partyName}
                 onChange={(e) => setPartyName(e.target.value)}
                 className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-[#a81b1e] focus:outline-none"
               />
+              {/* Saved parties from project_party_details; any new name can still be typed */}
+              <datalist id="project-party-names">
+                {partyOptions.map((name) => (
+                  <option key={name} value={name} />
+                ))}
+              </datalist>
             </div>
           )}
 
@@ -778,7 +863,7 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
                 className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold text-[#a81b1e] bg-red-50 hover:bg-red-100 border border-red-200 transition cursor-pointer"
               >
                 <Plus className="w-3 h-3" />
-                Add New Row
+                Add Consignee
               </button>
             </div>
 
@@ -842,36 +927,7 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">
-                        Grade
-                      </label>
-                      <input
-                        type="text"
-                        maxLength={SHORT_TEXT_MAX_LENGTH}
-                        placeholder="e.g. Fe 550D"
-                        value={row.grade}
-                        onChange={(e) => handleDeliveryChange(idx, 'grade', e.target.value)}
-                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-[#a81b1e]"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">
-                        Section
-                      </label>
-                      <input
-                        type="text"
-                        maxLength={SHORT_TEXT_MAX_LENGTH}
-                        placeholder="e.g. 12mm"
-                        value={row.section}
-                        onChange={(e) => handleDeliveryChange(idx, 'section', e.target.value)}
-                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-[#a81b1e]"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Lots: the consignee's qty is split into lots */}
+                  {/* Lots: product, qty and pricing of this consignee */}
                   <div className="space-y-1.5 p-2 rounded-md border border-slate-200 bg-white">
                     <div className="flex items-center justify-between">
                       <span className="text-[10px] font-bold text-slate-600 uppercase">
@@ -886,223 +942,280 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
                         Add Lot
                       </button>
                     </div>
-                    {row.lots.map((lot, li) => (
-                      <div key={li} className="grid grid-cols-2 sm:grid-cols-12 gap-1.5 items-end">
-                        <div className="sm:col-span-3">
-                          <label className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">Lot No</label>
-                          <input
-                            type="text"
-                            maxLength={SHORT_TEXT_MAX_LENGTH}
-                            placeholder={`Lot ${li + 1}`}
-                            value={lot.lotNo}
-                            onChange={(e) => handleLotChange(idx, li, 'lotNo', e.target.value)}
-                            className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-[#a81b1e]"
-                          />
+                    {row.lots.map((lot, li) => {
+                      const lotAmounts = getLotAmounts(lot);
+                      const lotInputClass =
+                        'w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-[#a81b1e]';
+                      const lotLabelClass = 'text-[9px] font-bold text-slate-500 uppercase block mb-0.5';
+                      return (
+                        <div key={li} className="p-2 rounded-md border border-slate-200 bg-slate-50/60 space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[9px] font-bold text-slate-400 uppercase">Lot {li + 1}</span>
+                            {row.lots.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveLot(idx, li)}
+                                className="text-slate-400 hover:text-red-600 p-0.5 rounded transition cursor-pointer"
+                                title="Remove lot"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Product: lot no, grade, section */}
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
+                            <div>
+                              <label className={lotLabelClass}>Lot No</label>
+                              <input
+                                type="text"
+                                maxLength={SHORT_TEXT_MAX_LENGTH}
+                                placeholder={`Lot ${li + 1}`}
+                                value={lot.lotNo}
+                                onChange={(e) => handleLotChange(idx, li, 'lotNo', e.target.value)}
+                                className={lotInputClass}
+                              />
+                            </div>
+                            <div>
+                              <label className={lotLabelClass}>Grade</label>
+                              <input
+                                type="text"
+                                maxLength={SHORT_TEXT_MAX_LENGTH}
+                                placeholder="e.g. Fe 550D"
+                                value={lot.grade}
+                                onChange={(e) => handleLotChange(idx, li, 'grade', e.target.value)}
+                                className={lotInputClass}
+                              />
+                            </div>
+                            <div>
+                              <label className={lotLabelClass}>Section</label>
+                              <input
+                                type="text"
+                                maxLength={SHORT_TEXT_MAX_LENGTH}
+                                placeholder="e.g. TMT Bar"
+                                value={lot.section}
+                                onChange={(e) => handleLotChange(idx, li, 'section', e.target.value)}
+                                className={lotInputClass}
+                              />
+                            </div>
+                          </div>
+
+                          {/* Pricing: qty, price, GST %, total */}
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                            <div>
+                              <label className={`${lotLabelClass} text-right`}>Qty (MT)</label>
+                              <input
+                                type="number"
+                                step="any"
+                                min="0"
+                                placeholder="MT"
+                                value={lot.qty}
+                                onChange={(e) => handleLotChange(idx, li, 'qty', e.target.value)}
+                                className={`${lotInputClass} text-right`}
+                              />
+                            </div>
+                            <div>
+                              <label className={`${lotLabelClass} text-right`}>Price (₹/MT)</label>
+                              <input
+                                type="number"
+                                step="any"
+                                min="0"
+                                placeholder="₹/MT"
+                                value={lot.rate}
+                                onChange={(e) => handleLotChange(idx, li, 'rate', e.target.value)}
+                                className={`${lotInputClass} text-right`}
+                              />
+                            </div>
+                            <div>
+                              <label className={`${lotLabelClass} text-right`}>GST %</label>
+                              <input
+                                type="number"
+                                step="any"
+                                min="0"
+                                max="100"
+                                placeholder="18"
+                                value={lot.gstPercent}
+                                onChange={(e) => handleLotChange(idx, li, 'gstPercent', e.target.value)}
+                                className={`${lotInputClass} text-right`}
+                              />
+                            </div>
+                            <div>
+                              <label className={`${lotLabelClass} text-right`}>Total Price (₹)</label>
+                              <div
+                                className="w-full rounded-md border border-slate-200 bg-slate-100 px-2 py-1.5 text-xs font-mono font-bold text-slate-900 text-right"
+                                title={`₹${lotAmounts.taxable.toLocaleString('en-IN', { maximumFractionDigits: 2 })} + GST ₹${lotAmounts.gstAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`}
+                              >
+                                {lotAmounts.total.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Schedule */}
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <div>
+                              <label className={lotLabelClass}>Start Date</label>
+                              <input
+                                type="date"
+                                value={lot.startDate}
+                                onChange={(e) => handleLotChange(idx, li, 'startDate', e.target.value)}
+                                className={lotInputClass}
+                              />
+                            </div>
+                            <div>
+                              <label className={lotLabelClass}>End Date</label>
+                              <input
+                                type="date"
+                                min={lot.startDate || undefined}
+                                value={lot.endDate}
+                                onChange={(e) => handleLotChange(idx, li, 'endDate', e.target.value)}
+                                className={lotInputClass}
+                              />
+                            </div>
+                          </div>
                         </div>
-                        <div className="sm:col-span-2">
-                          <label className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5 text-right">Qty (MT)</label>
-                          <input
-                            type="number"
-                            step="any"
-                            min="0"
-                            placeholder="MT"
-                            value={lot.qty}
-                            onChange={(e) => handleLotChange(idx, li, 'qty', e.target.value)}
-                            className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 text-right focus:outline-none focus:border-[#a81b1e]"
-                          />
-                        </div>
-                        <div className="sm:col-span-3">
-                          <label className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">Start Date</label>
-                          <input
-                            type="date"
-                            value={lot.startDate}
-                            onChange={(e) => handleLotChange(idx, li, 'startDate', e.target.value)}
-                            className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-[#a81b1e]"
-                          />
-                        </div>
-                        <div className="sm:col-span-3">
-                          <label className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">End Date</label>
-                          <input
-                            type="date"
-                            min={lot.startDate || undefined}
-                            value={lot.endDate}
-                            onChange={(e) => handleLotChange(idx, li, 'endDate', e.target.value)}
-                            className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-[#a81b1e]"
-                          />
-                        </div>
-                        <div className="sm:col-span-1 flex justify-end pb-1">
-                          {row.lots.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveLot(idx, li)}
-                              className="text-slate-400 hover:text-red-600 p-1 rounded transition cursor-pointer"
-                              title="Remove lot"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               ))}
             </div>
 
-            <p className={`text-[11px] font-semibold text-right ${deliveryQty - totalQty > 0.001 ? 'text-red-600' : 'text-slate-500'}`}>
-              Delivery qty {deliveryQty.toFixed(2)} MT of {totalQty.toFixed(2)} MT ordered
-            </p>
           </div>
         )}
 
-        {/* Dynamic Product Details Line Items (Saved in jsonb) */}
-        <div className="space-y-2 pt-2 border-t border-slate-200">
-          <div className="flex items-center justify-between">
-            <label className="text-xs font-bold text-slate-800 uppercase flex items-center gap-1.5">
-              <Layers className="w-3.5 h-3.5 text-[#a81b1e]" />
-              {hasUnifiedDropdown
-                ? `Product, ISI & Size (${isJSWFirm ? selectedSubtype : 'ESSAR Steel'})`
-                : 'Item & Description'}
-            </label>
-            <button
-              type="button"
-              onClick={handleAddItem}
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold text-[#a81b1e] bg-red-50 hover:bg-red-100 border border-red-200 transition cursor-pointer"
-            >
-              <Plus className="w-3 h-3" />
-              Add Product
-            </button>
-          </div>
+        {/* Product line items (JSW / ESSAR only; party-based orders use the consignee lots) */}
+        {!useLotPricing && (
+          <div className="space-y-2 pt-2 border-t border-slate-200">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-slate-800 uppercase flex items-center gap-1.5">
+                <Layers className="w-3.5 h-3.5 text-[#a81b1e]" />
+                {hasUnifiedDropdown
+                  ? `Product, ISI & Size (${isJSWFirm ? selectedSubtype : 'ESSAR Steel'})`
+                  : 'Item & Description'}
+              </label>
+              <button
+                type="button"
+                onClick={handleAddItem}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold text-[#a81b1e] bg-red-50 hover:bg-red-100 border border-red-200 transition cursor-pointer"
+              >
+                <Plus className="w-3 h-3" />
+                Add Product
+              </button>
+            </div>
 
-          <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-            {items.map((it, idx) => {
-              const lineQty = parseFloat(it.qty) || 0;
-              const lineRate = parseFloat(it.rate) || 0;
-              const lineTotal = lineQty * lineRate;
+            <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+              {items.map((it, idx) => {
+                const lineQty = parseFloat(it.qty) || 0;
+                const lineRate = parseFloat(it.rate) || 0;
+                const lineTotal = lineQty * lineRate;
 
-              return (
-                <div
-                  key={idx}
-                  className="grid grid-cols-12 gap-2 items-center p-2.5 rounded-lg border border-slate-200 bg-slate-50/70"
-                >
-                  {/* For JSW & ESSAR firms: Single unified dropdown containing brand description & size */}
-                  {hasUnifiedDropdown ? (
-                    <div className="col-span-7 sm:col-span-6">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">
-                        Item, ISI Spec & Size
-                      </label>
-                      <select
-                        value={it.productName}
-                        onChange={(e) => handleJswProductChange(idx, e.target.value)}
-                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 font-medium focus:outline-none focus:border-[#a81b1e]"
-                      >
-                        {getSubtypeProducts(selectedSubtype).map((prod) => (
-                          <option key={prod} value={prod}>
-                            {prod}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="col-span-4 sm:col-span-4">
+                return (
+                  <div
+                    key={idx}
+                    className="grid grid-cols-12 gap-2 items-center p-2.5 rounded-lg border border-slate-200 bg-slate-50/70"
+                  >
+                    {/* For JSW & ESSAR firms: Single unified dropdown containing brand description & size */}
+                    {hasUnifiedDropdown ? (
+                      <div className="col-span-7 sm:col-span-6">
                         <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">
-                          Product
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="Product (e.g. Fe 550D)"
-                          value={it.productName}
-                          onChange={(e) => handleItemChange(idx, 'productName', e.target.value)}
-                          className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 focus:outline-none"
-                        />
-                      </div>
-
-                      <div className="col-span-3 sm:col-span-2">
-                        <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">
-                          Size
+                          Item, ISI Spec & Size
                         </label>
                         <select
-                          value={it.size}
-                          onChange={(e) => handleItemChange(idx, 'size', e.target.value)}
-                          className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 focus:outline-none"
+                          value={it.productName}
+                          onChange={(e) => handleJswProductChange(idx, e.target.value)}
+                          className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 font-medium focus:outline-none focus:border-[#a81b1e]"
                         >
-                          {TMT_SIZES.map((sz) => (
-                            <option key={sz} value={sz}>
-                              {sz}
+                          {getSubtypeProducts(selectedSubtype).map((prod) => (
+                            <option key={prod} value={prod}>
+                              {prod}
                             </option>
                           ))}
-                          <option value="Custom">Custom</option>
                         </select>
                       </div>
-                    </>
-                  )}
+                    ) : (
+                      <>
+                        <div className="col-span-4 sm:col-span-4">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">
+                            Product
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="Product (e.g. Fe 550D)"
+                            value={it.productName}
+                            onChange={(e) => handleItemChange(idx, 'productName', e.target.value)}
+                            className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 focus:outline-none"
+                          />
+                        </div>
 
-                  <div className="col-span-2 sm:col-span-2">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5 text-right">
-                      Qty (MT)
-                    </label>
-                    <input
-                      type="number"
-                      step="any"
-                      min="0"
-                      placeholder="MT"
-                      value={it.qty}
-                      onChange={(e) => handleItemChange(idx, 'qty', e.target.value)}
-                      className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 text-right focus:outline-none focus:border-[#a81b1e]"
-                    />
-                  </div>
-
-                  <div className="col-span-2 sm:col-span-2">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5 text-right">
-                      Rate (₹)
-                    </label>
-                    <input
-                      type="number"
-                      step="any"
-                      min="0"
-                      placeholder="₹/MT"
-                      value={it.rate}
-                      onChange={(e) => handleItemChange(idx, 'rate', e.target.value)}
-                      className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 text-right focus:outline-none focus:border-[#a81b1e]"
-                    />
-                  </div>
-
-                  <div className="col-span-1 sm:col-span-2 flex items-center justify-between pl-1 pt-4">
-                    <span className="hidden sm:inline font-mono font-bold text-[11px] text-slate-700">
-                      ₹{lineTotal > 0 ? (lineTotal >= 100000 ? `${(lineTotal / 100000).toFixed(2)}L` : lineTotal.toLocaleString('en-IN')) : '0'}
-                    </span>
-                    {items.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveItem(idx)}
-                        className="text-slate-400 hover:text-red-600 p-1 rounded transition cursor-pointer"
-                        title="Remove line"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                        <div className="col-span-3 sm:col-span-2">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">
+                            Size
+                          </label>
+                          <select
+                            value={it.size}
+                            onChange={(e) => handleItemChange(idx, 'size', e.target.value)}
+                            className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 focus:outline-none"
+                          >
+                            {TMT_SIZES.map((sz) => (
+                              <option key={sz} value={sz}>
+                                {sz}
+                              </option>
+                            ))}
+                            <option value="Custom">Custom</option>
+                          </select>
+                        </div>
+                      </>
                     )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
 
-        {/* Specification field: Completely removed for JSW and ESSAR firm types */}
-        {!hideSpecificationField && (
-          <div>
-            <label className="block text-xs font-bold text-slate-700 uppercase mb-1 flex items-center gap-1">
-              <FileText className="w-3.5 h-3.5 text-slate-400" />
-              Specification
-            </label>
-            <input
-              type="text"
-              placeholder="e.g. Fe 550D as per IS 1786:2008, Grade, Length 12m, Test certificate required"
-              value={specification}
-              onChange={(e) => setSpecification(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-[#a81b1e] focus:outline-none"
-            />
+                    <div className="col-span-2 sm:col-span-2">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5 text-right">
+                        Qty (MT)
+                      </label>
+                      <input
+                        type="number"
+                        step="any"
+                        min="0"
+                        placeholder="MT"
+                        value={it.qty}
+                        onChange={(e) => handleItemChange(idx, 'qty', e.target.value)}
+                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 text-right focus:outline-none focus:border-[#a81b1e]"
+                      />
+                    </div>
+
+                    <div className="col-span-2 sm:col-span-2">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5 text-right">
+                        Rate (₹)
+                      </label>
+                      <input
+                        type="number"
+                        step="any"
+                        min="0"
+                        placeholder="₹/MT"
+                        value={it.rate}
+                        onChange={(e) => handleItemChange(idx, 'rate', e.target.value)}
+                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 text-right focus:outline-none focus:border-[#a81b1e]"
+                      />
+                    </div>
+
+                    <div className="col-span-1 sm:col-span-2 flex items-center justify-between pl-1 pt-4">
+                      <span className="hidden sm:inline font-mono font-bold text-[11px] text-slate-700">
+                        ₹{lineTotal > 0 ? (lineTotal >= 100000 ? `${(lineTotal / 100000).toFixed(2)}L` : lineTotal.toLocaleString('en-IN')) : '0'}
+                      </span>
+                      {items.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveItem(idx)}
+                          className="text-slate-400 hover:text-red-600 p-1 rounded transition cursor-pointer"
+                          title="Remove line"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
 
@@ -1116,10 +1229,18 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
           </div>
 
           <div className="text-right">
-            <span className="text-[10px] font-bold uppercase text-[#a81b1e] block">Total Order Valuation</span>
-            <span className="text-base font-black text-[#a81b1e]">
-              ₹ {totalValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            <span className="text-[10px] font-bold uppercase text-[#a81b1e] block">
+              {useLotPricing ? 'Total Order Value (incl. GST)' : 'Total Order Valuation'}
             </span>
+            <span className="text-base font-black text-[#a81b1e]">
+              ₹ {(useLotPricing ? grandTotal : totalValue).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+            {useLotPricing && (
+              <span className="block text-[10px] font-semibold text-slate-500">
+                ₹ {totalValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} + GST ₹{' '}
+                {totalGst.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            )}
           </div>
         </div>
 
