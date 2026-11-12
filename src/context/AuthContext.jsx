@@ -79,7 +79,7 @@ export const AuthProvider = ({ children }) => {
     return pos.includes('distributor') || r === 'distributor';
   }, [user]);
 
-  // Project Manager position: can book Sarthak project orders (project_orders, OR/<FY>/SAR/<n>)
+  // Project Manager position: can book Sarthak project orders (project_orders, OR/<FY>/SAR-P/<n>)
   const isProjectManager = useMemo(() => {
     if (!user) return false;
     const pos = String(user.position || '').toLowerCase();

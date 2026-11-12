@@ -5,6 +5,7 @@ export const TAB_PATHS = {
   dashboard: '/dashboard',
   orders: '/orders',
   dispatch: '/dispatch',
+  pendency: '/pendency-report',
   attendance: '/attendance',
   'sales-visits': '/sales-visits',
   distributors: '/distributors',

@@ -16,11 +16,11 @@ import { resolveBrandForUser } from '../data/constants';
 
 export const OrdersPage = () => {
   const { selectedBrand, refreshKey } = useApp();
-  const { user, firmAccess, isDistributor, isASM, isSalesPerson, canAccessAllFirms, canEdit, distributorFirmId, isProjectManager, firmCatalog } =
+  const { user, firmAccess, isDistributor, isASM, isSalesPerson, canAccessAllFirms, canEdit, distributorFirmId, isProjectManager, isSuperAdmin, firmCatalog } =
     useAuth();
   const canCreateOrders = canEdit('orders');
   const canDispatch = canEdit('dispatch');
-  // Sarthak project orders (project_orders, OR/<FY>/SAR/<n>) are booked from the Sarthak order form
+  // Sarthak project orders (project_orders, OR/<FY>/SAR-P/<n>) are booked from the Sarthak order form
   const sarthakFirmId = firmCatalog?.[0]?.storeId || 1;
 
   const [orders, setOrders] = useState([]);
@@ -46,10 +46,13 @@ export const OrdersPage = () => {
   }, [isProjectManager]);
 
   const isSalesRole = isASM || isSalesPerson;
+  // Area Sales Managers see only Sarthak retail orders (no project orders)
+  const hideProjectOrders = isASM;
   // Users without an assigned firm can view all firms in orders
   const effectiveBrand = useMemo(() => {
+    if (hideProjectOrders) return 'sarthak';
     return resolveBrandForUser(firmAccess, selectedBrand);
-  }, [firmAccess, selectedBrand]);
+  }, [firmAccess, selectedBrand, hideProjectOrders]);
 
   // Sales users without Sarthak firm access, and distributors, see only their own Sarthak orders.
   // Sales users given Sarthak in Firm Access see all Sarthak orders.
@@ -85,6 +88,9 @@ export const OrdersPage = () => {
     }
     if (effectiveBrand === 'jsw' || effectiveBrand === 'essar') {
       return { retail: [], project: await projectOrdersApi.getProjectOrders(effectiveBrand) };
+    }
+    if (hideProjectOrders) {
+      return { retail: await ordersApi.getOrders({ brandId: 'sarthak' }), project: [] };
     }
     if (effectiveBrand === 'sarthak') {
       const [retail, project] = await Promise.all([
@@ -122,7 +128,7 @@ export const OrdersPage = () => {
 
   useEffect(() => {
     fetchOrders();
-  }, [effectiveBrand, isDistributor, isSalesRole, ownOrdersOnly, user, refreshKey]);
+  }, [effectiveBrand, isDistributor, isSalesRole, ownOrdersOnly, hideProjectOrders, user, refreshKey]);
 
   // Status tabs: Pending = not fully dispatched (incl. partially dispatched), Delivered = fully dispatched
   const matchesStatus = (o) => {
@@ -219,6 +225,7 @@ export const OrdersPage = () => {
   // Not shown to users who only see their own bookings.
   const showSubTabs =
     !isDistributor &&
+    !hideProjectOrders &&
     ((effectiveBrand === 'all' && canAccessAllFirms && !isSalesRole) || (effectiveBrand === 'sarthak' && !ownOrdersOnly));
 
   const isViewingProjectOrders = isProjectBrand || (showSubTabs && activeSubTab === 'project');
@@ -230,17 +237,24 @@ export const OrdersPage = () => {
     return { pending: list.length - delivered, delivered };
   }, [isViewingProjectOrders, searchedOrders, searchedProjectOrders]);
 
-  // Only the Project Manager position can book Sarthak project orders
+  // Project Managers and Super Admins can book Sarthak project orders (OR/<FY>/SAR-P/<n>)
   const canBookSarthakProject =
-    isProjectManager && canCreateOrders && !isProjectBrand && !isDistributor && !ownOrdersOnly;
+    (isProjectManager || isSuperAdmin) &&
+    canCreateOrders &&
+    !isProjectBrand &&
+    !isDistributor &&
+    !ownOrdersOnly &&
+    !hideProjectOrders;
 
   const openOrderModal = () => {
-    // Project Managers open the Sarthak form on the Project Order form
-    setOrderFormType(canBookSarthakProject ? 'project' : 'standard');
+    // Project Managers always open on the Project Order form; Super Admins when on the Project tab
+    const openProject =
+      canBookSarthakProject && (isProjectManager || (showSubTabs && activeSubTab === 'project'));
+    setOrderFormType(openProject ? 'project' : 'standard');
     setIsOrderModalOpen(true);
   };
 
-  // Switch shown at the top of the Sarthak order form (Project Managers only)
+  // Switch shown at the top of the Sarthak order form (Project Managers and Super Admins)
   const orderTypeSwitch = canBookSarthakProject ? (
     <div className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-slate-100 border border-slate-200">
       {[
@@ -280,6 +294,8 @@ export const OrdersPage = () => {
           <p className="text-xs text-slate-500 font-medium mt-0.5">
             {ownOrdersOnly && !isDistributor
               ? `Live sales orders, managed by Sales Officer for Sarthak TMT`
+              : hideProjectOrders
+                ? 'Retail Orders of Sarthak TMT'
               : ownOrdersOnly
                 ? `Live order details, diameter schedules, and dispatch status for ${user?.full_name || user?.username || 'your account'}`
                 : effectiveBrand === 'jsw'
@@ -417,7 +433,8 @@ export const OrdersPage = () => {
               <table className="w-full text-left text-xs">
                 <thead className="bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-500 border-b border-slate-200">
                   <tr>
-                    <th className="py-3 px-3.5">Order ID & Date</th>
+                    <th className="py-3 px-3.5">Order ID</th>
+                    <th className="py-3 px-3.5 whitespace-nowrap">Order Date</th>
                     {!hidePartyColumn && <th className="py-3 px-3.5">Party / Client Name</th>}
                     <th className="py-3 px-3.5">PO Number</th>
                     <th className="py-3 px-3.5">{hideSpecificationColumn ? 'Brand / Series' : 'Sizes'}</th>
@@ -439,7 +456,8 @@ export const OrdersPage = () => {
                 <tbody className="divide-y divide-slate-100">
                   {Array.from({ length: 5 }).map((_, idx) => (
                     <tr key={idx} className="animate-pulse">
-                      <td className="py-3 px-3.5"><div className="h-3.5 w-24 bg-slate-200 rounded mb-1.5" /><div className="h-2.5 w-16 bg-slate-100 rounded" /></td>
+                      <td className="py-3 px-3.5"><div className="h-3.5 w-24 bg-slate-200 rounded" /></td>
+                      <td className="py-3 px-3.5"><div className="h-3.5 w-16 bg-slate-100 rounded" /></td>
                       {!hidePartyColumn && <td className="py-3 px-3.5"><div className="h-3.5 w-28 bg-slate-200 rounded" /></td>}
                       <td className="py-3 px-3.5"><div className="h-3.5 w-16 bg-slate-100 rounded font-mono" /></td>
                       <td className="py-3 px-3.5"><div className="h-5 w-20 bg-slate-200 rounded" /></td>
@@ -597,7 +615,8 @@ export const OrdersPage = () => {
                 <table className="w-full text-left text-xs">
                   <thead className="bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-500 border-b border-slate-200">
                     <tr>
-                      <th className="py-3 px-3.5">Order ID & Date</th>
+                      <th className="py-3 px-3.5">Order ID</th>
+                      <th className="py-3 px-3.5 whitespace-nowrap">Order Date</th>
                       {!hidePartyColumn && <th className="py-3 px-3.5">Party / Client Name</th>}
                       <th className="py-3 px-3.5">PO Number</th>
                       <th className="py-3 px-3.5">{hideSpecificationColumn ? 'Brand / Series' : 'Sizes'}</th>
@@ -646,12 +665,13 @@ export const OrdersPage = () => {
                                 e.stopPropagation();
                                 setSelectedProjectOrder(o);
                               }}
-                              className="text-left font-bold text-slate-900 hover:text-[#a81b1e] hover:underline cursor-pointer flex items-center gap-1"
+                              className="text-left font-bold text-slate-900 hover:text-[#a81b1e] hover:underline cursor-pointer flex items-center gap-1 whitespace-nowrap"
                             >
                               <span className="font-mono">{o.order_id}</span>
                             </button>
-                            <p className="text-[10px] font-mono text-slate-400">{o.date}</p>
                           </td>
+
+                          <td className="py-3 px-3.5 font-mono text-slate-600 whitespace-nowrap">{o.date || '—'}</td>
 
                           {!hidePartyColumn && (
                             <td className="py-3 px-3.5">

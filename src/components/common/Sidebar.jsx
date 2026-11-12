@@ -14,6 +14,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Factory,
+  ClipboardList,
   X,
 } from 'lucide-react';
 
@@ -31,6 +32,7 @@ export const Sidebar = ({ activeTab, onSelectTab, isOpen, onToggle, onClose }) =
     dashboard: LayoutDashboard,
     orders: ShoppingCart,
     dispatch: Truck,
+    pendency: ClipboardList,
     attendance: CalendarCheck,
     'sales-visits': MapPin,
     distributors: Building2,

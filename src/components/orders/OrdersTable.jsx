@@ -252,7 +252,8 @@ export const OrdersTable = ({ orders = [], onOpenDispatch, onViewDetails, loadin
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-500 border-b border-slate-200">
               <tr>
-                <th className="py-3 px-3.5">Order ID & Date</th>
+                <th className="py-3 px-3.5">Order ID</th>
+                <th className="py-3 px-3.5 whitespace-nowrap">Order Date</th>
                 {isSalesPerson ? (
                   <>
                     <th className="py-3 px-3.5">Dealer Name</th>
@@ -288,7 +289,7 @@ export const OrdersTable = ({ orders = [], onOpenDispatch, onViewDetails, loadin
                 return (
                   <React.Fragment key={order.id}>
                     <tr className="hover:bg-slate-50/80 transition">
-                      {/* Order ID & Date */}
+                      {/* Order ID */}
                       <td className="py-3 px-3.5 font-medium text-slate-900">
                         <div className="flex items-center gap-1.5">
                           <button
@@ -301,17 +302,17 @@ export const OrdersTable = ({ orders = [], onOpenDispatch, onViewDetails, loadin
                               <ChevronDown className="w-4 h-4" />
                             )}
                           </button>
-                          <div>
-                            <button
-                              onClick={() => handleOpenDetails(order)}
-                              className="text-left font-bold text-slate-900 hover:text-[#a81b1e] hover:underline cursor-pointer flex items-center gap-1 group"
-                            >
-                              <span>{order.id}</span>
-                            </button>
-                            <p className="text-[10px] font-mono text-slate-400">{order.date}</p>
-                          </div>
+                          <button
+                            onClick={() => handleOpenDetails(order)}
+                            className="text-left font-bold text-slate-900 hover:text-[#a81b1e] hover:underline cursor-pointer flex items-center gap-1 group whitespace-nowrap"
+                          >
+                            <span>{order.id}</span>
+                          </button>
                         </div>
                       </td>
+
+                      {/* Order Date */}
+                      <td className="py-3 px-3.5 font-mono text-slate-600 whitespace-nowrap">{order.date || '—'}</td>
 
                       {/* Distributor & Dealer / Sales Officer based on role */}
                       {isSalesPerson ? (
@@ -474,7 +475,7 @@ export const OrdersTable = ({ orders = [], onOpenDispatch, onViewDetails, loadin
                     {/* Expanded Row for optional details */}
                     {isExpanded && (
                       <tr className="bg-slate-50/60">
-                        <td colSpan={8} className="p-3.5">
+                        <td colSpan={9} className="p-3.5">
                           <div className="pl-4 border-l-2 border-[#a81b1e] text-xs text-slate-600 space-y-1">
                             <p>
                               <span className="font-semibold text-slate-700">Order ID:</span> {order.id} &bull;{' '}

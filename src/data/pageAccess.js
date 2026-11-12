@@ -40,11 +40,19 @@ export const APP_PAGES = [
   },
   {
     id: 'dispatch',
-    label: 'Dispatched Orders',
+    label: 'Dispatch Summary',
     description: 'Dispatches saved against retail and project orders',
-    viewHelp: 'See dispatched orders',
+    viewHelp: 'See dispatch summary',
     editHelp: 'Dispatch orders from the Orders page',
     supportsEdit: true,
+  },
+  {
+    id: 'pendency',
+    label: 'Pendency Report',
+    description: 'Retail and project orders with quantity still to dispatch',
+    viewHelp: 'See pending quantity per order',
+    editHelp: null,
+    supportsEdit: false,
   },
   {
     id: 'attendance',

@@ -29,6 +29,71 @@ const projectOrderQty = (row) => {
   return roundQty(total);
 };
 
+const parseJson = (value) => {
+  if (typeof value !== 'string') return value ?? null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+};
+
+// Keys of a numbered-key object { "1": {...}, "2": {...} } in order
+const orderedKeys = (obj) =>
+  obj && typeof obj === 'object' && !Array.isArray(obj)
+    ? Object.keys(obj)
+      .filter((k) => obj[k] && typeof obj[k] === 'object')
+      .sort((a, b) => (parseInt(a, 10) || 0) - (parseInt(b, 10) || 0))
+    : [];
+
+/**
+ * Consignee / lot plan of a project order from its delivery_details jsonb:
+ * [{ key, consignee_name, shipping_address, qty, lots: [{ key, lot_no, grade, section, qty }] }]
+ * Keys are the numbered keys of delivery_details, used to match lots across dispatches.
+ */
+const toDeliveryPlan = (deliveryDetails) => {
+  const details = parseJson(deliveryDetails);
+  return orderedKeys(details)
+    .map((ck) => {
+      const c = details[ck];
+      const lots = orderedKeys(c.lots).map((lk, li) => {
+        const l = c.lots[lk];
+        return {
+          key: String(lk),
+          lot_no: l.lot_no || `Lot ${li + 1}`,
+          grade: l.grade || c.grade || '',
+          section: l.section || c.section || '',
+          qty: roundQty(parseFloat(l.qty) || 0),
+        };
+      });
+      return {
+        key: String(ck),
+        consignee_name: c.consignee_name || '',
+        shipping_address: c.shipping_address || '',
+        qty: roundQty(lots.reduce((acc, l) => acc + l.qty, 0)),
+        lots: lots.filter((l) => l.qty > 0),
+      };
+    })
+    .filter((c) => c.lots.length > 0);
+};
+
+export const lotDispatchKey = (consigneeKey, lotKey) => `${consigneeKey}|${lotKey}`;
+
+/** Dispatched MT per lot (Map "<consigneeKey>|<lotKey>" -> MT) from dispatch rows' project_order_details */
+export function lotDispatchTotals(rows) {
+  const totals = new Map();
+  for (const r of rows || []) {
+    const details = parseJson(r.project_order_details);
+    for (const c of Array.isArray(details?.consignees) ? details.consignees : []) {
+      for (const l of Array.isArray(c?.lots) ? c.lots : []) {
+        const key = lotDispatchKey(c.key, l.key);
+        totals.set(key, roundQty((totals.get(key) || 0) + (Number(l.dispatch_qty) || 0)));
+      }
+    }
+  }
+  return totals;
+}
+
 const orderColumn = (type) => {
   if (type === 'retail') return 'retail_order_id';
   if (type === 'project') return 'project_order';
@@ -54,7 +119,7 @@ export const dispatchApi = {
   async getOrderDispatches(type, orderDbId) {
     const { data, error } = await supabase
       .from('dispatch')
-      .select('id, created_at, dispatch_date, dispatch_qty, order_qty, pending_qty, submitted_by')
+      .select('id, created_at, dispatch_date, dispatch_qty, order_qty, pending_qty, submitted_by, project_order_details')
       .eq(orderColumn(type), Number(orderDbId))
       .order('created_at', { ascending: true });
 
@@ -91,14 +156,19 @@ export const dispatchApi = {
       if (!data) throw new Error('Order not found. It may have been deleted.');
       return roundQty(parseFloat(data.order_qty) || 0);
     }
+    return (await this.getProjectOrderInfo(orderDbId)).orderQty;
+  },
+
+  /** Project order qty and its consignee / lot plan (delivery_details), straight from the database */
+  async getProjectOrderInfo(orderDbId) {
     const { data, error } = await supabase
       .from('project_orders')
-      .select('id, product_details')
+      .select('id, product_details, delivery_details')
       .eq('id', Number(orderDbId))
       .maybeSingle();
     if (error) throw error;
     if (!data) throw new Error('Project order not found. It may have been deleted.');
-    return projectOrderQty(data);
+    return { orderQty: projectOrderQty(data), plan: toDeliveryPlan(data.delivery_details) };
   },
 
   /**
@@ -109,13 +179,36 @@ export const dispatchApi = {
    * - After saving, totals are checked again; if two dispatches were saved at the same
    *   moment and the order became over-dispatched, this dispatch is removed again
    */
-  async createDispatch({ type, orderDbId, dispatchQty, dispatchDate, submittedBy }) {
+  async createDispatch({ type, orderDbId, dispatchQty, dispatchDate, submittedBy, lots }) {
     const column = orderColumn(type);
     const id = Number(orderDbId);
     if (!Number.isInteger(id) || id <= 0) throw new Error('Invalid order reference.');
 
-    const qty = roundQty(dispatchQty);
-    if (!Number.isFinite(Number(dispatchQty)) || qty <= 0) throw new Error('Dispatch quantity must be greater than 0.');
+    // Project orders with consignees / lots: the dispatch qty is the total of the lots being dispatched
+    const projectInfo = type === 'project' ? await this.getProjectOrderInfo(id) : null;
+    const plan = projectInfo?.plan || [];
+    const useLots = plan.length > 0;
+    const lotQty = new Map();
+    if (useLots) {
+      for (const l of Array.isArray(lots) ? lots : []) {
+        const q = roundQty(l?.qty);
+        if (!Number.isFinite(Number(l?.qty)) || q < 0) throw new Error('Lot dispatch quantities must be 0 or more.');
+        if (q > 0) {
+          const key = lotDispatchKey(l.consigneeKey, l.lotKey);
+          lotQty.set(key, roundQty((lotQty.get(key) || 0) + q));
+        }
+      }
+      if (lotQty.size === 0) throw new Error('Enter the dispatch quantity for at least one lot.');
+      const known = new Set(plan.flatMap((c) => c.lots.map((l) => lotDispatchKey(c.key, l.key))));
+      if ([...lotQty.keys()].some((k) => !known.has(k))) {
+        throw new Error('The consignees / lots of this order have changed. Please reopen the dispatch form.');
+      }
+    }
+
+    const qty = useLots ? roundQty([...lotQty.values()].reduce((a, b) => a + b, 0)) : roundQty(dispatchQty);
+    if ((!useLots && !Number.isFinite(Number(dispatchQty))) || qty <= 0) {
+      throw new Error('Dispatch quantity must be greater than 0.');
+    }
 
     const date = String(dispatchDate || '').slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(new Date(date).getTime())) {
@@ -126,7 +219,7 @@ export const dispatchApi = {
     const who = String(submittedBy || '').trim();
     if (!who) throw new Error('Could not identify the logged in user. Please log in again.');
 
-    const orderQty = await this.getOrderQty(type, id);
+    const orderQty = projectInfo ? projectInfo.orderQty : await this.getOrderQty(type, id);
     if (orderQty <= 0) throw new Error('This order has no quantity to dispatch.');
 
     const previous = await this.getOrderDispatches(type, id);
@@ -138,6 +231,45 @@ export const dispatchApi = {
       throw new Error(`Dispatch quantity (${qty} MT) is more than the pending quantity (${remaining} MT).`);
     }
 
+    // Which consignee's lots are dispatched (each lot not more than its own pending qty)
+    let projectOrderDetails = null;
+    if (useLots) {
+      const prevLots = lotDispatchTotals(previous);
+      const consignees = [];
+      for (const c of plan) {
+        const cLots = [];
+        for (const l of c.lots) {
+          const key = lotDispatchKey(c.key, l.key);
+          const q = lotQty.get(key) || 0;
+          if (q <= 0) continue;
+          const lotPending = Math.max(0, roundQty(l.qty - (prevLots.get(key) || 0)));
+          if (q - lotPending > QTY_EPSILON) {
+            const who2 = c.consignee_name || c.shipping_address || `Consignee ${c.key}`;
+            throw new Error(`${who2} - ${l.lot_no}: dispatch quantity (${q} MT) is more than its pending quantity (${lotPending} MT).`);
+          }
+          cLots.push({
+            key: l.key,
+            lot_no: l.lot_no,
+            grade: l.grade || null,
+            section: l.section || null,
+            lot_qty: l.qty,
+            dispatch_qty: q,
+            pending_qty: Math.max(0, roundQty(lotPending - q)),
+          });
+        }
+        if (cLots.length) {
+          consignees.push({
+            key: c.key,
+            consignee_name: c.consignee_name || null,
+            shipping_address: c.shipping_address || null,
+            dispatch_qty: roundQty(cLots.reduce((acc, l) => acc + l.dispatch_qty, 0)),
+            lots: cLots,
+          });
+        }
+      }
+      projectOrderDetails = { consignees };
+    }
+
     const row = {
       [column]: id,
       order_qty: orderQty,
@@ -145,6 +277,7 @@ export const dispatchApi = {
       dispatch_date: date,
       pending_qty: Math.max(0, roundQty(remaining - qty)),
       submitted_by: who,
+      ...(projectOrderDetails ? { project_order_details: projectOrderDetails } : {}),
     };
 
     const { data, error } = await supabase.from('dispatch').insert([row]).select().single();
@@ -158,7 +291,14 @@ export const dispatchApi = {
     try {
       const after = await this.getOrderDispatches(type, id);
       const total = roundQty(after.reduce((acc, r) => acc + (Number(r.dispatch_qty) || 0), 0));
-      if (total - orderQty > QTY_EPSILON) {
+      let lotOver = false;
+      if (useLots) {
+        const afterLots = lotDispatchTotals(after);
+        lotOver = plan.some((c) =>
+          c.lots.some((l) => (afterLots.get(lotDispatchKey(c.key, l.key)) || 0) - l.qty > QTY_EPSILON)
+        );
+      }
+      if (total - orderQty > QTY_EPSILON || lotOver) {
         await supabase.from('dispatch').delete().eq('id', data.id);
         throw new Error('Another dispatch was saved for this order at the same time. Please refresh and try again.');
       }
@@ -213,6 +353,11 @@ export const dispatchApi = {
         order_qty: roundQty(r.order_qty),
         pending_qty: roundQty(r.pending_qty),
         submitted_by: r.submitted_by || '',
+        project_order_details: isProject ? parseJson(r.project_order_details) : null,
+        // Consignees / lots carried by this dispatch (project orders)
+        dispatch_consignees: isProject && Array.isArray(parseJson(r.project_order_details)?.consignees)
+          ? parseJson(r.project_order_details).consignees
+          : [],
         type: isProject ? 'project' : 'retail',
         order_db_id: isProject ? r.project_order : r.retail_order_id,
         order_id: o.order_id || (isProject ? `PRJ-${r.project_order}` : `ORD-${r.retail_order_id}`),
@@ -234,7 +379,7 @@ export const dispatchApi = {
         const orderId = String(o.order_id || '');
         const firmId = Number(o.firm_id);
         let brandId = 'other';
-        if (/sarthak/i.test(o.brand_type || '') || orderId.includes('/SAR/')) brandId = 'sarthak';
+        if (/sarthak/i.test(o.brand_type || '') || /\/SAR(-P)?\//.test(orderId)) brandId = 'sarthak';
         else if (firmId === 2 || /jsw/i.test(orderId)) brandId = 'jsw';
         else if ([3, 6].includes(firmId) || /essar/i.test(orderId)) brandId = 'essar';
 
@@ -255,6 +400,15 @@ export const dispatchApi = {
           })),
           products: items.map((it) => `${it.productName || 'TMT'}${it.size ? ` (${it.size})` : ''}`).join(', '),
           specification: details.specification || details.remarks || '',
+          // Order's buyer / consignee records (delivery_details), each with its lots: [{ key, ..., lotsList }]
+          deliveries: (() => {
+            const dd = parseJson(o.delivery_details);
+            return orderedKeys(dd).map((ck) => ({
+              ...dd[ck],
+              key: String(ck),
+              lotsList: orderedKeys(dd[ck].lots).map((lk) => ({ ...dd[ck].lots[lk], key: String(lk) })),
+            }));
+          })(),
           order_value: Math.round(value * 100) / 100,
           firm_id: o.firm_id ?? null,
           sales_person_id: null,

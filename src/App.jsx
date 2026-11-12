@@ -16,6 +16,7 @@ import { ProjectOrdersPage } from './pages/ProjectOrdersPage';
 import { AttendancePage } from './pages/AttendancePage';
 import { SalesVisitsPage } from './pages/SalesVisitsPage';
 import { FirmsPage } from './pages/FirmsPage';
+import { PendencyReportPage } from './pages/PendencyReportPage';
 import { ShieldAlert } from 'lucide-react';
 import { APP_PAGES } from './data/pageAccess';
 import { useRoute, pathFor, parsePath, safeRedirectPath, loginPathFor } from './routes';
@@ -153,6 +154,8 @@ const MainLayout = () => {
         return isManager ? <ProjectOrdersPage /> : <OrdersPage />;
       case 'dispatch':
         return <DispatchPage />;
+      case 'pendency':
+        return <PendencyReportPage />;
       case 'attendance':
         return <AttendancePage />;
       case 'sales-visits':

@@ -6,12 +6,32 @@ import { resolveBrandForUser } from '../data/constants';
 import { BrandBadge } from '../components/common/BrandBadge';
 import { Pagination } from '../components/common/Pagination';
 import { Modal } from '../components/common/Modal';
-import { Truck, Building2, AlertTriangle, RefreshCw, Search, User, CalendarDays, Eye } from 'lucide-react';
+import { Truck, Building2, AlertTriangle, RefreshCw, Search, User, CalendarDays, Eye, MapPin, Package } from 'lucide-react';
 
 const fmtMT = (n) => `${(Number(n) || 0).toLocaleString('en-IN', { maximumFractionDigits: 3 })} MT`;
 const fmtINR = (n) => (Number(n) > 0 ? `₹${Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '—');
 
-const DetailRow = ({ label, children }) => (
+// Rate per MT: retail order rate; project orders use their item rates (a range when items differ),
+// falling back to order value / order qty
+const rateLabel = (r) => {
+  if (r.type === 'retail' && Number(r.rate) > 0) return fmtINR(r.rate);
+  const rates = [...new Set((r.items || []).map((it) => Number(it.rate) || 0).filter((x) => x > 0))].sort((a, b) => a - b);
+  if (rates.length === 1) return fmtINR(rates[0]);
+  if (rates.length > 1) return `${fmtINR(rates[0])} – ${fmtINR(rates[rates.length - 1])}`;
+  const qty = Number(r.order_qty) || 0;
+  return qty > 0 && Number(r.order_value) > 0 ? fmtINR(Number(r.order_value) / qty) : '—';
+};
+
+// Consignee names carried by a project dispatch, e.g. "ABC Infra, XYZ Builders"
+const consigneeLabel = (r) =>
+  (r.dispatch_consignees || [])
+    .map((c) => c.consignee_name || c.shipping_address || `Consignee ${c.key}`)
+    .join(', ');
+
+const lotLabel = (r) =>
+  (r.dispatch_consignees || []).flatMap((c) => (c.lots || []).map((l) => l.lot_no)).filter(Boolean).join(', ');
+
+const DetailRow =({ label, children }) => (
   <div className="flex justify-between gap-3 py-1.5 border-b border-slate-100 last:border-0">
     <span className="text-slate-500 font-medium shrink-0">{label}</span>
     <span className="font-semibold text-slate-900 text-right break-words">{children || '—'}</span>
@@ -26,9 +46,8 @@ const TYPE_TABS = [
 
 const TypeBadge = ({ type }) => (
   <span
-    className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-extrabold border ${
-      type === 'project' ? 'bg-purple-50 text-purple-800 border-purple-200' : 'bg-blue-50 text-blue-800 border-blue-200'
-    }`}
+    className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-extrabold border ${type === 'project' ? 'bg-purple-50 text-purple-800 border-purple-200' : 'bg-blue-50 text-blue-800 border-blue-200'
+      }`}
   >
     {type === 'project' ? 'Project' : 'Retail'}
   </span>
@@ -104,6 +123,8 @@ export const DispatchPage = () => {
         String(r.dealer || '').toLowerCase().includes(q) ||
         String(r.sales_person || '').toLowerCase().includes(q) ||
         String(r.submitted_by).toLowerCase().includes(q) ||
+        consigneeLabel(r).toLowerCase().includes(q) ||
+        lotLabel(r).toLowerCase().includes(q) ||
         String(r.id).includes(q)
       );
     });
@@ -175,26 +196,24 @@ export const DispatchPage = () => {
       <div className="flex flex-col gap-3 rounded-xl border border-slate-200/80 bg-white p-3 shadow-xs">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
           {showTypeTabs ? (
-          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-            {TYPE_TABS.map((t) => (
-              <button
-                key={t.id}
-                onClick={() => setTypeTab(t.id)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition cursor-pointer shrink-0 ${
-                  typeTab === t.id ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                }`}
-              >
-                {t.label}
-                <span
-                  className={`ml-1.5 inline-flex min-w-[1.25rem] justify-center px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
-                    typeTab === t.id ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'
-                  }`}
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+              {TYPE_TABS.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => setTypeTab(t.id)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition cursor-pointer shrink-0 ${typeTab === t.id ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                    }`}
                 >
-                  {loading && rows.length === 0 ? '–' : tabCount(t.id)}
-                </span>
-              </button>
-            ))}
-          </div>
+                  {t.label}
+                  <span
+                    className={`ml-1.5 inline-flex min-w-[1.25rem] justify-center px-1.5 py-0.5 rounded-full text-[10px] font-bold ${typeTab === t.id ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'
+                      }`}
+                  >
+                    {loading && rows.length === 0 ? '–' : tabCount(t.id)}
+                  </span>
+                </button>
+              ))}
+            </div>
           ) : (
             <p className="text-xs font-bold text-slate-700">
               {searchedRows.length} dispatch{searchedRows.length === 1 ? '' : 'es'}
@@ -289,13 +308,21 @@ export const DispatchPage = () => {
                       PO: <strong className="text-slate-800 font-mono">{r.po_number || '—'}</strong>
                     </span>
                     <span>
-                      Value: <strong className="text-slate-800">{fmtINR(r.order_value)}</strong>
+                      Rate: <strong className="text-slate-800">{rateLabel(r)}</strong> / MT
                     </span>
                   </div>
                   {r.products && <p className="text-[11px] text-slate-500 truncate">{r.products}</p>}
+                  {r.dispatch_consignees?.length > 0 && (
+                    <p className="flex items-start gap-1 text-[11px] text-slate-600">
+                      <MapPin className="w-3 h-3 shrink-0 mt-0.5 text-slate-400" />
+                      <span className="truncate">
+                        {consigneeLabel(r)} · {lotLabel(r)}
+                      </span>
+                    </p>
+                  )}
                 </div>
 
-                <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                <div className="grid grid-cols-2 gap-2 text-center text-xs">
                   <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
                     <span className="text-[10px] text-slate-500 font-bold uppercase block">Order</span>
                     <p className="font-bold text-slate-900">{fmtMT(r.order_qty)}</p>
@@ -304,16 +331,9 @@ export const DispatchPage = () => {
                     <span className="text-[10px] text-[#a81b1e] font-bold uppercase block">Dispatched</span>
                     <p className="font-black text-[#a81b1e]">{fmtMT(r.dispatch_qty)}</p>
                   </div>
-                  <div className="p-2 rounded-lg bg-amber-50 border border-amber-200">
-                    <span className="text-[10px] text-amber-700 font-bold uppercase block">Pending</span>
-                    <p className="font-bold text-amber-800">{fmtMT(r.pending_qty)}</p>
-                  </div>
                 </div>
 
-                <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100">
-                  <p className="text-[11px] text-slate-500 min-w-0 truncate">
-                    By <strong className="text-slate-700">{r.submitted_by || '—'}</strong> &bull; {formatIST(r.created_at)}
-                  </p>
+                <div className="flex items-center justify-end gap-2 pt-1 border-t border-slate-100">
                   <button
                     onClick={() => setDetailRow(r)}
                     className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs transition cursor-pointer shrink-0"
@@ -333,15 +353,14 @@ export const DispatchPage = () => {
                 <thead className="bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-500 border-b border-slate-200">
                   <tr>
                     <th className="py-3 px-3.5 whitespace-nowrap">Dispatch Date</th>
-                    <th className="py-3 px-3.5">Order</th>
+                    <th className="py-3 px-3.5">Order ID</th>
+                    <th className="py-3 px-3.5 whitespace-nowrap">Order Date</th>
                     <th className="py-3 px-3.5">Party / Distributor</th>
                     <th className="py-3 px-3.5 whitespace-nowrap">PO Number</th>
                     <th className="py-3 px-3.5">Products</th>
-                    <th className="py-3 px-3.5 text-right whitespace-nowrap">Order Value</th>
+                    <th className="py-3 px-3.5 text-right whitespace-nowrap">Rate / MT</th>
                     <th className="py-3 px-3.5 text-right whitespace-nowrap">Order Qty</th>
                     <th className="py-3 px-3.5 text-right">Dispatched</th>
-                    <th className="py-3 px-3.5 text-right whitespace-nowrap">Pending After</th>
-                    <th className="py-3 px-3.5 whitespace-nowrap">Submitted By</th>
                     <th className="py-3 px-3.5 text-right">Action</th>
                   </tr>
                 </thead>
@@ -354,16 +373,24 @@ export const DispatchPage = () => {
                       </td>
                       <td className="py-3 px-3.5">
                         <p className="font-bold text-slate-900 font-mono whitespace-nowrap">{r.order_id}</p>
-                        <p className="text-[10px] text-slate-400 font-mono">Ordered {r.order_date || '—'}</p>
                         <div className="flex items-center gap-1 mt-0.5">
                           <TypeBadge type={r.type} />
                           <BrandBadge brandId={r.brandId} />
                         </div>
                       </td>
+                      <td className="py-3 px-3.5 font-mono text-slate-600 whitespace-nowrap">{r.order_date || '—'}</td>
                       <td className="py-3 px-3.5">
                         <p className="font-semibold text-slate-800 truncate max-w-[180px]">{r.party || '—'}</p>
                         {r.type === 'retail' && (
                           <p className="text-[10px] text-slate-400 truncate max-w-[180px]">Dealer: {r.dealer || 'Self'}</p>
+                        )}
+                        {r.dispatch_consignees?.length > 0 && (
+                          <p
+                            className="text-[10px] text-slate-500 truncate max-w-[180px]"
+                            title={`${consigneeLabel(r)} · Lots: ${lotLabel(r)}`}
+                          >
+                            To: {consigneeLabel(r)} · {lotLabel(r)}
+                          </p>
                         )}
                       </td>
                       <td className="py-3 px-3.5 font-mono text-slate-700 whitespace-nowrap">{r.po_number || '—'}</td>
@@ -372,14 +399,9 @@ export const DispatchPage = () => {
                           {r.products || '—'}
                         </span>
                       </td>
-                      <td className="py-3 px-3.5 text-right font-mono font-bold text-slate-900 whitespace-nowrap">{fmtINR(r.order_value)}</td>
+                      <td className="py-3 px-3.5 text-right font-mono font-bold text-slate-900 whitespace-nowrap">{rateLabel(r)}</td>
                       <td className="py-3 px-3.5 text-right font-mono text-slate-700">{fmtMT(r.order_qty)}</td>
                       <td className="py-3 px-3.5 text-right font-mono font-black text-[#a81b1e]">{fmtMT(r.dispatch_qty)}</td>
-                      <td className="py-3 px-3.5 text-right font-mono font-bold text-amber-700">{fmtMT(r.pending_qty)}</td>
-                      <td className="py-3 px-3.5">
-                        <p className="font-semibold text-slate-800">{r.submitted_by || '—'}</p>
-                        <p className="text-[10px] text-slate-400 whitespace-nowrap">{formatIST(r.created_at)}</p>
-                      </td>
                       <td className="py-3 px-3.5 text-right">
                         <button
                           onClick={() => setDetailRow(r)}
@@ -422,7 +444,7 @@ export const DispatchPage = () => {
         isOpen={Boolean(detailRow)}
         onClose={() => setDetailRow(null)}
         title={detailRow ? `Dispatch #${detailRow.id} - ${detailRow.order_id}` : ''}
-        maxWidth="max-w-2xl"
+        maxWidth={detailRow?.type === 'project' && detailRow?.deliveries?.length ? 'max-w-4xl' : 'max-w-2xl'}
       >
         {detailRow && (
           <div className="space-y-4 text-xs">
@@ -450,6 +472,17 @@ export const DispatchPage = () => {
                   <DetailRow label="Rate">{fmtINR(detailRow.rate)} / MT</DetailRow>
                 )}
                 {detailRow.specification && <DetailRow label="Specification">{detailRow.specification}</DetailRow>}
+                {(() => {
+                  const buyer = (detailRow.deliveries || []).find((d) => d.billing_address || d.billing_address_gst_no);
+                  return buyer ? (
+                    <DetailRow label="Buyer (Billing)">
+                      {buyer.billing_address || '—'}
+                      <span className="block text-[11px] font-mono font-medium text-slate-500">
+                        GST: {buyer.billing_address_gst_no || '—'}
+                      </span>
+                    </DetailRow>
+                  ) : null;
+                })()}
                 <DetailRow label="Order Value">{fmtINR(detailRow.order_value)}</DetailRow>
               </section>
 
@@ -469,7 +502,121 @@ export const DispatchPage = () => {
               </section>
             </div>
 
-            {detailRow.items?.length > 0 && (
+            {/* Consignees & lots carried by this dispatch */}
+            {detailRow.type === 'project' && detailRow.dispatch_consignees?.length > 0 && (
+              <section className="space-y-2">
+                <h3 className="flex items-center gap-1.5 text-[11px] font-extrabold uppercase text-[#a81b1e]">
+                  <Truck className="w-3.5 h-3.5" />
+                  Dispatched To ({detailRow.dispatch_consignees.length} consignee
+                  {detailRow.dispatch_consignees.length === 1 ? '' : 's'})
+                </h3>
+                {detailRow.dispatch_consignees.map((c) => {
+                  const rec = (detailRow.deliveries || []).find((d) => String(d.key) === String(c.key)) || {};
+                  return (
+                    <div key={c.key} className="rounded-xl border border-red-200 bg-white overflow-hidden">
+                      <div className="flex flex-wrap items-start justify-between gap-2 px-3 py-2 bg-red-50/40 border-b border-red-100">
+                        <div className="min-w-0">
+                          <p className="font-bold text-slate-900 break-words">
+                            {c.consignee_name || rec.consignee_name || `Consignee ${c.key}`}
+                          </p>
+                          <p className="flex items-start gap-1 text-[11px] text-slate-600">
+                            <MapPin className="w-3 h-3 shrink-0 mt-0.5 text-slate-400" />
+                            <span className="break-words">{c.shipping_address || rec.shipping_address || '—'}</span>
+                          </p>
+                          {rec.shipping_gst && <p className="text-[11px] font-mono text-slate-500">GST: {rec.shipping_gst}</p>}
+                        </div>
+                        <span className="font-mono font-black text-[#a81b1e] shrink-0">{fmtMT(c.dispatch_qty)}</span>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-[11px]">
+                          <thead className="text-[10px] font-bold uppercase text-slate-500 border-b border-slate-100">
+                            <tr>
+                              <th className="py-2 px-3">Lot</th>
+                              <th className="py-2 px-3">Grade</th>
+                              <th className="py-2 px-3">Section</th>
+                              <th className="py-2 px-3 text-right whitespace-nowrap">Lot Qty</th>
+                              <th className="py-2 px-3 text-right whitespace-nowrap">Dispatched</th>
+                              <th className="py-2 px-3 text-right whitespace-nowrap">Lot Pending After</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {(c.lots || []).map((l) => (
+                              <tr key={l.key}>
+                                <td className="py-2 px-3 font-bold text-slate-900 whitespace-nowrap">{l.lot_no || '—'}</td>
+                                <td className="py-2 px-3 text-slate-700">{l.grade || '—'}</td>
+                                <td className="py-2 px-3 text-slate-700">{l.section || '—'}</td>
+                                <td className="py-2 px-3 text-right font-mono whitespace-nowrap">{fmtMT(l.lot_qty)}</td>
+                                <td className="py-2 px-3 text-right font-mono font-black text-[#a81b1e] whitespace-nowrap">
+                                  {fmtMT(l.dispatch_qty)}
+                                </td>
+                                <td className="py-2 px-3 text-right font-mono font-bold text-amber-700 whitespace-nowrap">
+                                  {fmtMT(l.pending_qty)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })}
+              </section>
+            )}
+
+            {/* Order's consignees & lots (delivery_details) */}
+            {detailRow.type === 'project' && detailRow.deliveries?.some((d) => d.lotsList?.length) && (
+              <section className="space-y-2">
+                <h3 className="flex items-center gap-1.5 text-[11px] font-extrabold uppercase text-slate-500">
+                  <Package className="w-3.5 h-3.5" />
+                  Order Consignees & Lots ({detailRow.deliveries.length})
+                </h3>
+                {detailRow.deliveries.map((d, idx) => (
+                  <div key={d.key || idx} className="rounded-xl border border-slate-200 overflow-hidden">
+                    <div className="flex flex-wrap items-start justify-between gap-2 px-3 py-2 bg-slate-50 border-b border-slate-200">
+                      <div className="min-w-0">
+                        <p className="font-bold text-slate-900 break-words">{d.consignee_name || `Consignee ${idx + 1}`}</p>
+                        <p className="text-[11px] text-slate-600 break-words">{d.shipping_address || '—'}</p>
+                      </div>
+                      <span className="font-mono font-bold text-slate-900 shrink-0">
+                        {fmtMT((d.lotsList || []).reduce((acc, l) => acc + (Number(l.qty) || 0), 0) || d.qty)}
+                      </span>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-[11px]">
+                        <thead className="text-[10px] font-bold uppercase text-slate-500 border-b border-slate-100">
+                          <tr>
+                            <th className="py-2 px-3">Lot</th>
+                            <th className="py-2 px-3">Grade</th>
+                            <th className="py-2 px-3">Section</th>
+                            <th className="py-2 px-3 text-right">Qty</th>
+                            <th className="py-2 px-3 text-right whitespace-nowrap">Rate / MT</th>
+                            <th className="py-2 px-3 text-right">Amount</th>
+                            <th className="py-2 px-3 whitespace-nowrap">Delivery Window</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {(d.lotsList || []).map((l, li) => (
+                            <tr key={l.key || li}>
+                              <td className="py-2 px-3 font-bold text-slate-900 whitespace-nowrap">{l.lot_no || `Lot ${li + 1}`}</td>
+                              <td className="py-2 px-3 text-slate-700">{l.grade || d.grade || '—'}</td>
+                              <td className="py-2 px-3 text-slate-700">{l.section || d.section || '—'}</td>
+                              <td className="py-2 px-3 text-right font-mono whitespace-nowrap">{fmtMT(l.qty)}</td>
+                              <td className="py-2 px-3 text-right font-mono">{fmtINR(l.price)}</td>
+                              <td className="py-2 px-3 text-right font-mono font-bold">{fmtINR(l.total_price)}</td>
+                              <td className="py-2 px-3 font-mono text-slate-500 whitespace-nowrap">
+                                {l.start_date || l.end_date ? `${l.start_date || '—'} → ${l.end_date || '—'}` : '—'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ))}
+              </section>
+            )}
+
+            {detailRow.items?.length > 0 && !detailRow.deliveries?.some((d) => d.lotsList?.length) && (
               <section className="space-y-1.5">
                 <h3 className="text-[11px] font-extrabold uppercase text-slate-500">Products</h3>
                 <div className="overflow-x-auto rounded-lg border border-slate-200">

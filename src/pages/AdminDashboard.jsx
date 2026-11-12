@@ -52,11 +52,14 @@ export const AdminDashboard = () => {
   const [dashboardPageSize, setDashboardPageSize] = useState(15);
 
   const isSalesRole = isASM || isSalesPerson;
+  // Area Sales Managers see only Sarthak retail orders (no project orders)
+  const hideProjectOrders = isASM;
 
   // Users without an assigned firm can view all firms in dashboard
   const effectiveBrand = useMemo(() => {
+    if (hideProjectOrders) return 'sarthak';
     return resolveBrandForUser(firmAccess, selectedBrand);
-  }, [firmAccess, selectedBrand]);
+  }, [firmAccess, selectedBrand, hideProjectOrders]);
 
   // Sales users without Sarthak firm access, and distributors, see only their own Sarthak orders.
   // Sales users given Sarthak in Firm Access see all Sarthak orders.
@@ -209,10 +212,11 @@ export const AdminDashboard = () => {
             ordersApi.getOrderStats('sarthak'),
             ordersApi.getOrders({ brandId: 'sarthak' }),
             dispatchApi.getDispatches({ brandId: 'sarthak' }),
-            projectOrdersApi.getProjectOrders('sarthak'),
+            // ASMs do not see project orders
+            hideProjectOrders ? Promise.resolve([]) : projectOrdersApi.getProjectOrders('sarthak'),
           ]);
           if (!isMounted) return;
-          // Sarthak totals include Sarthak project orders (OR/<FY>/SAR/<n>)
+          // Sarthak totals include Sarthak project orders (OR/<FY>/SAR-P/<n>)
           const prj = sarthakProjects || [];
           const prjMT = prj.reduce((acc, o) => acc + (o.total_qty || 0), 0);
           const prjVal = prj.reduce((acc, o) => acc + (o.total_value || 0), 0);
@@ -286,7 +290,7 @@ export const AdminDashboard = () => {
     return () => {
       isMounted = false;
     };
-  }, [effectiveBrand, refreshKey, isSalesRole, isDistributor, isManager, ownOrdersOnly, user, isUnauthorizedUser]);
+  }, [effectiveBrand, refreshKey, isSalesRole, isDistributor, isManager, ownOrdersOnly, hideProjectOrders, user, isUnauthorizedUser]);
 
   useEffect(() => {
     setDashboardPage(1);
@@ -442,10 +446,18 @@ export const AdminDashboard = () => {
         />
 
         <StatCard
-          title={ownOrdersOnly ? (isDistributor ? 'My Orders' : 'My Booked Orders') : isManager ? 'Project Orders' : 'Active Trucks'}
-          value={ownOrdersOnly || isManager ? (orders?.length || 0) : (dispatches?.length || 0)}
-          unit={ownOrdersOnly || isManager ? 'Orders' : 'Trucks'}
-          icon={ownOrdersOnly || isManager ? Package : Truck}
+          title={
+            ownOrdersOnly
+              ? isDistributor ? 'My Orders' : 'My Booked Orders'
+              : isManager
+                ? 'Project Orders'
+                : hideProjectOrders
+                  ? 'Booked Orders'
+                  : 'Active Trucks'
+          }
+          value={ownOrdersOnly || isManager || hideProjectOrders ? (orders?.length || 0) : (dispatches?.length || 0)}
+          unit={ownOrdersOnly || isManager || hideProjectOrders ? 'Orders' : 'Trucks'}
+          icon={ownOrdersOnly || isManager || hideProjectOrders ? Package : Truck}
           textColor="text-cyan-600"
           iconBg="bg-cyan-50 text-cyan-600"
           isLoading={loading}
@@ -508,9 +520,11 @@ export const AdminDashboard = () => {
                 brandDispatchedMT = bOrders.reduce((sum, o) => sum + (o.deliveredMT || 0), 0);
                 // Plus Sarthak project orders
                 const sarthakProjects = projectOrders.filter((o) => o.brandId === 'sarthak');
-                retailMT = brandOrderedMT;
-                projectMT = sarthakProjects.reduce((sum, o) => sum + (o.total_qty || 0), 0);
-                brandOrderedMT += projectMT;
+                // Retail / Project split is not shown to ASMs (retail only)
+                retailMT = hideProjectOrders ? null : brandOrderedMT;
+                const sarthakProjectMT = sarthakProjects.reduce((sum, o) => sum + (o.total_qty || 0), 0);
+                projectMT = sarthakProjectMT;
+                brandOrderedMT += sarthakProjectMT;
                 brandDispatchedMT += sarthakProjects
                   .reduce((sum, o) => sum + (o.dispatched_qty || 0), 0);
               } else if (brand.id === 'jsw') {
@@ -607,6 +621,7 @@ export const AdminDashboard = () => {
         const showOrderTabs =
           !isManager &&
           !isDistributor &&
+          !hideProjectOrders &&
           ((effectiveBrand === 'all' && canAccessAllFirms && !isSalesRole) || (effectiveBrand === 'sarthak' && !ownOrdersOnly));
 
         const isShowingProjectOrders =

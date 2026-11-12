@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Modal } from '../common/Modal';
-import { projectOrdersApi } from '../../api/projectOrdersApi';
+import { projectOrdersApi, SARTHAK_PROJECT_TAG } from '../../api/projectOrdersApi';
 import { useAuth } from '../../context/AuthContext';
 import { useApp } from '../../context/AppContext';
 import {
@@ -81,10 +81,10 @@ const getRowQty = (row) => row.lots.reduce((acc, lot) => acc + (parseFloat(lot.q
 
 const round2 = (n) => Number((Number.isFinite(n) ? n : 0).toFixed(2));
 
-// sarthakProject: Sarthak TMT project order (Project Manager only) -> order id OR/<FY>/SAR/<n>, brand_type 'Sarthak'
+// sarthakProject: Sarthak TMT project order (Project Manager / Super Admin) -> order id OR/<FY>/SAR-P/<n>, brand_type 'Sarthak'
 // headerSlot: optional content shown at the top of the form (e.g. Standard / Project order switch)
 export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defaultFirmId, sarthakProject = false, headerSlot = null }) => {
-  const { firmAccess, canEdit, isProjectManager } = useAuth();
+  const { firmAccess, canEdit, isProjectManager, isSuperAdmin } = useAuth();
   // Firm the order is booked under: the firm selected on screen, otherwise the user's own firm
   const orderFirmId = defaultFirmId || firmAccess?.firmId || null;
   const { showToast, triggerRefresh } = useApp();
@@ -101,7 +101,7 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
 
   // Firm name shown in the form (all-firms users book under the firm selected on screen)
   const firmDisplayName = sarthakProject ? 'Sarthak TMT' : isJSWFirm ? 'JSW One' : isEssarFirm ? 'ESSAR' : 'Sarthak TMT';
-  const orderTag = sarthakProject ? 'SAR' : null;
+  const orderTag = sarthakProject ? SARTHAK_PROJECT_TAG : null;
 
   // Whether the firm uses a single unified dropdown with full ISI specification
   const hasUnifiedDropdown = isJSWFirm || isEssarFirm;
@@ -348,8 +348,8 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
       alert('Access Denied: You have view-only access to Orders and cannot create project orders.');
       return;
     }
-    if (sarthakProject && !isProjectManager) {
-      alert('Access Denied: Only Project Managers can book Sarthak project orders.');
+    if (sarthakProject && !isProjectManager && !isSuperAdmin) {
+      alert('Access Denied: Only Project Managers and Super Admins can book Sarthak project orders.');
       return;
     }
 

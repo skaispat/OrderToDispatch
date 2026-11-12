@@ -1,6 +1,8 @@
 import { supabase, fetchAllRows } from './client';
 import { FIRMS_LIST } from '../data/constants';
 
+// Order id tag of Sarthak project orders: OR/<FY>/SAR-P/<n> (older ones used SAR)
+export const SARTHAK_PROJECT_TAG = 'SAR-P';
 const LOCAL_STORAGE_KEY = 'skai_local_project_orders';
 const FIRMS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache TTL
 
@@ -135,63 +137,40 @@ export const projectOrdersApi = {
     }
 
     const prefix = `OR/${fy}/${firmTag}/`;
+    // Older ids that share the same number series:
+    // JSW used 'JSW One'; Sarthak project orders used 'SAR' before 'SAR-P' (numbering continues from them)
+    const legacyPrefixes =
+      firmTag === 'JSW' ? [`OR/${fy}/JSW One/`] : firmTag === SARTHAK_PROJECT_TAG ? [`OR/${fy}/SAR/`] : [];
+    const allPrefixes = [prefix, ...legacyPrefixes];
+
+    const seqOf = (val) => {
+      if (!val || typeof val !== 'string') return 0;
+      const p = allPrefixes.find((x) => val.startsWith(x));
+      if (!p) return 0;
+      const numPart = parseInt(val.slice(p.length), 10);
+      return Number.isNaN(numPart) ? 0 : numPart;
+    };
 
     try {
-      // Highly optimized: only fetch order_id column and limit to latest 30 matching rows
-      let query = supabase
-        .from('project_orders')
-        .select('order_id')
-        .order('id', { ascending: false })
-        .limit(30);
-
-      if (firmTag === 'JSW') {
-        // Match both canonical 'OR/.../JSW/' and legacy 'OR/.../JSW One/'
-        query = query.or(`order_id.ilike.${prefix}%,order_id.ilike.OR/${fy}/JSW One/%`);
-      } else {
-        query = query.ilike('order_id', `${prefix}%`);
-      }
-
-      const { data, error } = await query;
+      // Only fetch order_id column and limit to latest 30 matching rows
+      let query = supabase.from('project_orders').select('order_id');
+      // Single prefix uses ilike directly (a firm-name tag may contain characters that break an .or() filter)
+      query =
+        allPrefixes.length > 1
+          ? query.or(allPrefixes.map((x) => `order_id.ilike.${x}%`).join(','))
+          : query.ilike('order_id', `${prefix}%`);
+      const { data, error } = await query.order('id', { ascending: false }).limit(30);
 
       let maxSeq = 0;
-      if (!error && Array.isArray(data) && data.length > 0) {
-        for (const row of data) {
-          const val = row?.order_id;
-          if (!val || typeof val !== 'string') continue;
-
-          if (val.startsWith(prefix)) {
-            const numPart = parseInt(val.slice(prefix.length), 10);
-            if (!isNaN(numPart) && numPart > maxSeq) {
-              maxSeq = numPart;
-            }
-          } else if (firmTag === 'JSW' && val.startsWith(`OR/${fy}/JSW One/`)) {
-            const numPart = parseInt(val.slice(`OR/${fy}/JSW One/`.length), 10);
-            if (!isNaN(numPart) && numPart > maxSeq) {
-              maxSeq = numPart;
-            }
-          }
-        }
+      if (!error && Array.isArray(data)) {
+        for (const row of data) maxSeq = Math.max(maxSeq, seqOf(row?.order_id));
       }
 
       // Also check local cache for any offline unsynced orders
       try {
         const local = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
         if (Array.isArray(local)) {
-          for (const row of local) {
-            const val = row?.order_id;
-            if (!val || typeof val !== 'string') continue;
-            if (val.startsWith(prefix)) {
-              const numPart = parseInt(val.slice(prefix.length), 10);
-              if (!isNaN(numPart) && numPart > maxSeq) {
-                maxSeq = numPart;
-              }
-            } else if (firmTag === 'JSW' && val.startsWith(`OR/${fy}/JSW One/`)) {
-              const numPart = parseInt(val.slice(`OR/${fy}/JSW One/`.length), 10);
-              if (!isNaN(numPart) && numPart > maxSeq) {
-                maxSeq = numPart;
-              }
-            }
-          }
+          for (const row of local) maxSeq = Math.max(maxSeq, seqOf(row?.order_id));
         }
       } catch (e) {}
 
@@ -221,7 +200,7 @@ export const projectOrdersApi = {
         } else if (firmIdOrFilter === 'essar') {
           query = query.or('firm_id.eq.6,firm_id.eq.3,order_id.ilike.%ESSAR%');
         } else if (firmIdOrFilter === 'sarthak') {
-          query = query.or('brand_type.ilike.%sarthak%,order_id.ilike.%/SAR/%');
+          query = query.or('brand_type.ilike.%sarthak%,order_id.ilike.%/SAR/%,order_id.ilike.%/SAR-P/%');
         } else if (
           firmIdOrFilter !== null &&
           firmIdOrFilter !== undefined &&
@@ -277,7 +256,7 @@ export const projectOrdersApi = {
         (numFirmId ? firmsMap.get(numFirmId) : null) ||
         (numFirmId ? `Firm #${numFirmId}` : 'General Project');
 
-      const isSarthak = /sarthak/i.test(o.brand_type || '') || /\/SAR\//.test(o.order_id || '');
+      const isSarthak = /sarthak/i.test(o.brand_type || '') || /\/SAR(-P)?\//.test(o.order_id || '');
       const isJSW =
         !isSarthak && (numFirmId === 2 ||
         /jsw/i.test(o.order_id || '') ||
@@ -336,8 +315,9 @@ export const projectOrdersApi = {
         obj && typeof obj === 'object' && !Array.isArray(obj)
           ? Object.keys(obj)
             .sort((a, b) => (parseInt(a, 10) || 0) - (parseInt(b, 10) || 0))
-            .map((key) => obj[key])
-            .filter((v) => v && typeof v === 'object')
+            .filter((key) => obj[key] && typeof obj[key] === 'object')
+            // key: the numbered key, used to match consignees / lots with dispatch.project_order_details
+            .map((key) => ({ ...obj[key], key: String(key) }))
           : [];
       // Each consignee's lots { "1": { lot_no, qty, start_date, end_date } } -> lotsList
       const deliveries = toOrderedList(deliveryDetails).map((d) => ({ ...d, lotsList: toOrderedList(d.lots) }));
@@ -366,7 +346,7 @@ export const projectOrdersApi = {
 
   /**
    * Creates a new project order in Supabase with retry logic for race conditions on order_id.
-   * payload.order_tag overrides the firm tag in the order id (e.g. 'SAR' -> OR/2026-27/SAR/1).
+   * payload.order_tag overrides the firm tag in the order id (e.g. 'SAR-P' -> OR/2026-27/SAR-P/1).
    * payload.brand_type is stored in project_orders.brand_type (e.g. 'Sarthak').
    * Errors are thrown so the user never sees an order as saved when the database rejected it.
    */
@@ -437,6 +417,29 @@ export const projectOrdersApi = {
       if (name && !byKey.has(name.toLowerCase())) byKey.set(name.toLowerCase(), name);
     }
     return [...byKey.values()].sort((a, b) => a.localeCompare(b));
+  },
+
+  /**
+   * Party names per project order from project_party_details: Map<project_orders.id, "Party A, Party B">
+   */
+  async getPartyDetailsMap() {
+    const rows = await fetchAllRows(() =>
+      supabase
+        .from('project_party_details')
+        .select('order_id, party_name', { count: 'exact' })
+        .not('order_id', 'is', null)
+        .order('id')
+    );
+    const byOrder = new Map();
+    for (const row of rows || []) {
+      const name = String(row?.party_name || '').trim();
+      if (!name) continue;
+      const key = Number(row.order_id);
+      const list = byOrder.get(key) || [];
+      if (!list.some((n) => n.toLowerCase() === name.toLowerCase())) list.push(name);
+      byOrder.set(key, list);
+    }
+    return new Map([...byOrder].map(([k, list]) => [k, list.join(', ')]));
   },
 
   /**
