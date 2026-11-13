@@ -17,6 +17,7 @@ import { AttendancePage } from './pages/AttendancePage';
 import { SalesVisitsPage } from './pages/SalesVisitsPage';
 import { FirmsPage } from './pages/FirmsPage';
 import { PendencyReportPage } from './pages/PendencyReportPage';
+import { DailySalesVisitPage } from './pages/DailySalesVisitPage';
 import { ShieldAlert } from 'lucide-react';
 import { APP_PAGES } from './data/pageAccess';
 import { useRoute, pathFor, parsePath, safeRedirectPath, loginPathFor } from './routes';
@@ -160,6 +161,8 @@ const MainLayout = () => {
         return <AttendancePage />;
       case 'sales-visits':
         return <SalesVisitsPage />;
+      case 'daily-sales-visit':
+        return <DailySalesVisitPage />;
       case 'distributors':
         return <DistributorPage />;
       case 'firms':

@@ -4,6 +4,7 @@ import { ordersApi } from '../../api/ordersApi';
 import { distributorApi } from '../../api/distributorApi';
 import { dealerApi } from '../../api/dealerApi';
 import { usersApi } from '../../api/usersApi';
+import { dispatchApi } from '../../api/dispatchApi';
 import { useAuth } from '../../context/AuthContext';
 import { useApp } from '../../context/AppContext';
 import {
@@ -17,7 +18,9 @@ import {
 } from 'lucide-react';
 
 // headerSlot: optional content shown at the top of the form (e.g. Standard / Project order switch)
-export const CreateOrderModal = ({ isOpen, onClose, headerSlot = null }) => {
+// editOrder: an existing retail order (as loaded by ordersApi.getOrders) to edit instead of creating one
+export const CreateOrderModal = ({ isOpen, onClose, headerSlot = null, editOrder = null }) => {
+  const isEdit = Boolean(editOrder);
   const { user, isDistributor, isSalesPerson, isASM, canEdit, distributorFirmId } = useAuth();
   const { triggerRefresh, showToast } = useApp();
 
@@ -57,6 +60,9 @@ export const CreateOrderModal = ({ isOpen, onClose, headerSlot = null }) => {
       setDealers(validDealers);
       setUsersList(uList || []);
 
+      // Edit keeps the order's own distributor / dealer
+      if (editOrder) return;
+
       if (isDistributor) {
         // Auto-match distributor for logged in distributor account
         const matched =
@@ -95,6 +101,18 @@ export const CreateOrderModal = ({ isOpen, onClose, headerSlot = null }) => {
   };
 
   useEffect(() => {
+    if (isOpen && editOrder) {
+      setOrderDate(String(editOrder.date || editOrder.created_at || todayStr).slice(0, 10));
+      setDistributorId(editOrder.distributor_id ? String(editOrder.distributor_id) : '');
+      setDealerId(editOrder.dealer_id ? String(editOrder.dealer_id) : 'self');
+      setOrderQty(editOrder.order_qty ? String(editOrder.order_qty) : '');
+      setPrice(editOrder.order_value ? String(editOrder.order_value) : '');
+      setPreviewOrderId(editOrder.order_id || '');
+      setDealerSearch('');
+      setIsDealerDropdownOpen(false);
+      loadData();
+      return;
+    }
     if (isOpen) {
       setOrderDate(todayStr);
       setDealerSearch('');
@@ -105,17 +123,17 @@ export const CreateOrderModal = ({ isOpen, onClose, headerSlot = null }) => {
         .then((id) => setPreviewOrderId(id))
         .catch(() => {});
     }
-  }, [isOpen, user, isDistributor]);
+  }, [isOpen, user, isDistributor, editOrder]);
 
-  // Update order_id preview whenever order date changes
+  // Update order_id preview whenever order date changes (an edited order keeps its own ID)
   useEffect(() => {
-    if (isOpen && orderDate) {
+    if (isOpen && orderDate && !isEdit) {
       ordersApi
         .generateNextOrderId(orderDate)
         .then((id) => setPreviewOrderId(id))
         .catch(() => {});
     }
-  }, [isOpen, orderDate]);
+  }, [isOpen, orderDate, isEdit]);
 
   // Close dropdown on click outside
   useEffect(() => {
@@ -149,6 +167,13 @@ export const CreateOrderModal = ({ isOpen, onClose, headerSlot = null }) => {
   const headerFieldLabel = isDistributor ? 'Distributor Name' : 'Sales Officer';
 
   const headerFieldValue = useMemo(() => {
+    if (editOrder && !isDistributor) {
+      const name = editOrder.sales_person_name;
+      if (name || editOrder.sales_person_id) {
+        return `${name || 'Officer'}${editOrder.sales_person_id ? ` (ID: ${editOrder.sales_person_id})` : ''}`;
+      }
+      return '—';
+    }
     if (isDistributor) {
       return (
         currentDistributor?.name ||
@@ -161,7 +186,7 @@ export const CreateOrderModal = ({ isOpen, onClose, headerSlot = null }) => {
       return `${user.full_name || user.username} (ID: ${user.emp_id})`;
     }
     return '—';
-  }, [isDistributor, currentDistributor, user]);
+  }, [isDistributor, currentDistributor, user, editOrder]);
 
   // Reset dealer selection when distributor changes
   const handleDistributorChange = (e) => {
@@ -242,6 +267,34 @@ export const CreateOrderModal = ({ isOpen, onClose, headerSlot = null }) => {
     }
 
     setLoading(true);
+    if (isEdit) {
+      try {
+        // Already dispatched quantity cannot be removed from the order
+        const dispatches = await dispatchApi.getOrderDispatches('retail', editOrder.db_id);
+        const dispatched = dispatches.reduce((acc, r) => acc + (Number(r.dispatch_qty) || 0), 0);
+        if (qty + 0.0005 < dispatched) {
+          throw new Error(
+            `${Math.round(dispatched * 1000) / 1000} MT of this order is already dispatched; the order quantity cannot be less than that.`
+          );
+        }
+        await ordersApi.updateOrder(editOrder.db_id, {
+          date: orderDate,
+          distributor_id: parseInt(effDistId, 10),
+          dealer_id: dealerId === 'self' || !dealerId ? null : parseInt(dealerId, 10),
+          order_qty: qty,
+          order_value: rate,
+        });
+        showToast(`Order ${editOrder.order_id} updated successfully!`);
+        triggerRefresh();
+        onClose();
+      } catch (err) {
+        console.error('Error updating order:', err);
+        alert('Failed to update order: ' + err.message);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
     try {
       // Determine Sales Person ID:
       // If distributor is logged in, use distributor's assigned sales_person_id
@@ -288,9 +341,14 @@ export const CreateOrderModal = ({ isOpen, onClose, headerSlot = null }) => {
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="New Order" maxWidth="max-w-lg">
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={isEdit ? `Edit Order — ${editOrder.order_id}` : 'New Order'}
+      maxWidth="max-w-lg"
+    >
       <form onSubmit={handleSubmit} className="space-y-4">
-        {headerSlot}
+        {!isEdit && headerSlot}
         {/* Brand & Upcoming Order ID Banner */}
         <div className="flex items-center justify-between p-2.5 rounded-lg bg-slate-50 border border-slate-200">
           <div className="flex items-center gap-2">
@@ -578,7 +636,7 @@ export const CreateOrderModal = ({ isOpen, onClose, headerSlot = null }) => {
             disabled={loading || !orderQty || !price}
             className="w-full sm:w-auto px-5 py-2.5 sm:py-2 rounded-lg bg-[#a81b1e] text-xs font-bold text-white hover:bg-[#8e1518] transition disabled:opacity-50 cursor-pointer text-center"
           >
-            {loading ? 'Creating...' : 'Create Order'}
+            {loading ? (isEdit ? 'Updating...' : 'Creating...') : isEdit ? 'Update Order' : 'Create Order'}
           </button>
         </div>
       </form>

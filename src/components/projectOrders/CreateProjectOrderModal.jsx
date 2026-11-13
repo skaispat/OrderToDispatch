@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Modal } from '../common/Modal';
 import { projectOrdersApi, SARTHAK_PROJECT_TAG } from '../../api/projectOrdersApi';
+import { dispatchApi, lotDispatchKey, lotDispatchTotals } from '../../api/dispatchApi';
 import { useAuth } from '../../context/AuthContext';
 import { useApp } from '../../context/AppContext';
 import {
@@ -81,9 +82,51 @@ const getRowQty = (row) => row.lots.reduce((acc, lot) => acc + (parseFloat(lot.q
 
 const round2 = (n) => Number((Number.isFinite(n) ? n : 0).toFixed(2));
 
+const toInputValue = (v) => (v === null || v === undefined ? '' : String(v));
+
+// Form rows from a saved order's consignees (order.deliveries with lotsList).
+// _key keeps the delivery_details key so dispatches stay linked to their consignee / lot.
+const deliveryRowsFromOrder = (order) => {
+  const deliveries = Array.isArray(order?.deliveries) ? order.deliveries : [];
+  const rows = deliveries.map((d) => {
+    const lots = (Array.isArray(d.lotsList) ? d.lotsList : []).map((l) => ({
+      _key: l.key ? String(l.key) : undefined,
+      lotNo: toInputValue(l.lot_no),
+      grade: toInputValue(l.grade || d.grade),
+      section: toInputValue(l.section || d.section),
+      qty: toInputValue(l.qty),
+      rate: toInputValue(l.price),
+      gstPercent: l.gst_percent === null || l.gst_percent === undefined ? DEFAULT_GST_PERCENT : String(l.gst_percent),
+      startDate: toInputValue(l.start_date),
+      endDate: toInputValue(l.end_date),
+    }));
+    return {
+      _key: d.key ? String(d.key) : undefined,
+      consigneeName: toInputValue(d.consignee_name),
+      shippingAddress: toInputValue(d.shipping_address),
+      shippingGst: toInputValue(d.shipping_gst),
+      lots: lots.length ? lots : [emptyLot()],
+    };
+  });
+  return rows.length ? rows : [emptyDeliveryRow()];
+};
+
+// Next free numbered key, never reusing a key the saved order had (its dispatches may point at it)
+const nextKey = (usedKeys) => String(Math.max(0, ...[...usedKeys].map((k) => parseInt(k, 10) || 0)) + 1);
+
 // sarthakProject: Sarthak TMT project order (Project Manager / Super Admin) -> order id OR/<FY>/SAR-P/<n>, brand_type 'Sarthak'
 // headerSlot: optional content shown at the top of the form (e.g. Standard / Project order switch)
-export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defaultFirmId, sarthakProject = false, headerSlot = null }) => {
+// editOrder: an existing project order (as loaded by projectOrdersApi.getProjectOrders) to edit instead of creating one
+export const CreateProjectOrderModal = ({
+  isOpen,
+  onClose,
+  onOrderCreated,
+  defaultFirmId,
+  sarthakProject = false,
+  headerSlot = null,
+  editOrder = null,
+}) => {
+  const isEdit = Boolean(editOrder);
   const { firmAccess, canEdit, isProjectManager, isSuperAdmin } = useAuth();
   // Firm the order is booked under: the firm selected on screen, otherwise the user's own firm
   const orderFirmId = defaultFirmId || firmAccess?.firmId || null;
@@ -154,6 +197,32 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
 
   // Reset form whenever modal opens
   useEffect(() => {
+    if (isOpen && editOrder) {
+      // Edit: fill the form from the saved order
+      const subtype = editOrder.product_details?.subtype;
+      setModalStep('form');
+      setSelectedSubtype(subtype === 'One Helix' ? 'One Helix' : 'JSW One');
+      setOrderDate(String(editOrder.date || editOrder.created_at || todayStr).slice(0, 10));
+      setPartyName(editOrder.party_name || '');
+      setPoNumber(editOrder.po_number && editOrder.po_number !== '—' ? editOrder.po_number : '');
+      const buyer = (editOrder.deliveries || []).find((d) => d.billing_address || d.billing_address_gst_no);
+      setBuyerAddress(buyer?.billing_address || '');
+      setBuyerGstNo(buyer?.billing_address_gst_no || '');
+      setDeliveryRows(deliveryRowsFromOrder(editOrder));
+      const savedItems = Array.isArray(editOrder.items) ? editOrder.items : [];
+      setItems(
+        savedItems.length
+          ? savedItems.map((it) => ({
+            productName: it.productName || 'TMT Rebar',
+            size: it.size || '12mm',
+            qty: toInputValue(it.qty),
+            rate: toInputValue(it.rate),
+          }))
+          : [{ productName: 'Fe 550D TMT Rebar', size: '12mm', qty: '', rate: '' }]
+      );
+      setPreviewOrderId(editOrder.order_id || '');
+      return;
+    }
     if (isOpen) {
       setModalStep(isJSWFirm ? 'select_brand' : 'form');
       setSelectedSubtype('JSW One');
@@ -177,7 +246,7 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
         },
       ]);
     }
-  }, [isOpen, isJSWFirm, isEssarFirm, todayStr]);
+  }, [isOpen, isJSWFirm, isEssarFirm, todayStr, editOrder]);
 
   // Load saved party names each time the form opens (a failed load leaves the field as plain text input)
   useEffect(() => {
@@ -197,7 +266,8 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
   // Update preview order ID whenever orderDate or firm_id changes (with subscription tracking to prevent race conditions)
   useEffect(() => {
     let isSubscribed = true;
-    if (isOpen && orderDate) {
+    // An edited order keeps its own order ID
+    if (isOpen && orderDate && !isEdit) {
       projectOrdersApi
         .generateNextOrderId(orderDate, orderFirmId, orderTag)
         .then((id) => {
@@ -210,7 +280,7 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
     return () => {
       isSubscribed = false;
     };
-  }, [isOpen, orderDate, orderFirmId, orderTag]);
+  }, [isOpen, orderDate, orderFirmId, orderTag, isEdit]);
 
   const handleSelectSubtype = (subtype) => {
     setSelectedSubtype(subtype);
@@ -349,7 +419,7 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
       return;
     }
     if (sarthakProject && !isProjectManager && !isSuperAdmin) {
-      alert('Access Denied: Only Project Managers and Super Admins can book Sarthak project orders.');
+      alert(`Access Denied: Only Project Managers and Super Admins can ${isEdit ? 'edit' : 'book'} Sarthak project orders.`);
       return;
     }
 
@@ -518,10 +588,36 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
       //          lots: { "1": { lot_no, grade, section, qty, price, gst_percent, gst_amount, total_price,
       //                         start_date, end_date }, ... } }, "2": {...} }
       // The buyer (billing) entered once is written into every consignee record; qty is the total of its lots
+      // Keys: an edited order keeps each consignee's / lot's saved key; new ones get the next unused number
+      const savedDeliveries = isEdit && Array.isArray(editOrder.deliveries) ? editOrder.deliveries : [];
+      const usedRowKeys = new Set([
+        ...savedDeliveries.map((d) => String(d.key)),
+        ...filledDeliveryRows.map((r) => r._key).filter(Boolean),
+      ]);
+      const rowKeys = filledDeliveryRows.map((row) => {
+        if (row._key) return row._key;
+        const k = nextKey(usedRowKeys);
+        usedRowKeys.add(k);
+        return k;
+      });
+      const lotKeysOf = (row, rowKey) => {
+        const saved = savedDeliveries.find((d) => String(d.key) === rowKey);
+        const used = new Set([
+          ...(saved?.lotsList || []).map((l) => String(l.key)),
+          ...filledLotsOf(row).map((l) => l._key).filter(Boolean),
+        ]);
+        return filledLotsOf(row).map((lot) => {
+          if (lot._key) return lot._key;
+          const k = nextKey(used);
+          used.add(k);
+          return k;
+        });
+      };
+
       const deliveryDetailsPayload = filledDeliveryRows.length
         ? Object.fromEntries(
           filledDeliveryRows.map((row, idx) => [
-            String(idx + 1),
+            rowKeys[idx],
             {
               billing_address: buyerAddressValue,
               billing_address_gst_no: buyerGstValue || null,
@@ -533,7 +629,7 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
                 filledLotsOf(row).map((lot, li) => {
                   const a = getLotAmounts(lot);
                   return [
-                    String(li + 1),
+                    lotKeysOf(row, rowKeys[idx])[li],
                     {
                       lot_no: lot.lotNo.trim() || null,
                       grade: lot.grade.trim() || null,
@@ -566,14 +662,59 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
         ...(sarthakProject ? { brand_type: 'Sarthak', order_tag: orderTag } : {}),
       };
 
+      if (isEdit) {
+        // Quantities already dispatched cannot be removed from the order
+        const dispatches = await dispatchApi.getOrderDispatches('project', editOrder.db_id);
+        const dispatchedTotal = dispatches.reduce((acc, r) => acc + (Number(r.dispatch_qty) || 0), 0);
+        if (totalQty + 0.0005 < dispatchedTotal) {
+          throw new Error(
+            `${round2(dispatchedTotal)} MT of this order is already dispatched; the total quantity cannot be less than that.`
+          );
+        }
+        const lotTotals = lotDispatchTotals(dispatches);
+        const lotNames = new Map();
+        dispatches.forEach((r) =>
+          (r.project_order_details?.consignees || []).forEach((c) =>
+            (c.lots || []).forEach((l) =>
+              lotNames.set(lotDispatchKey(c.key, l.key), `${c.consignee_name || `Consignee ${c.key}`} - ${l.lot_no}`)
+            )
+          )
+        );
+        for (const [key, dispatched] of lotTotals) {
+          if (dispatched <= 0) continue;
+          const [ck, lk] = key.split('|');
+          const lot = deliveryDetailsPayload?.[ck]?.lots?.[lk];
+          const name = lotNames.get(key) || 'A lot';
+          if (!lot) {
+            throw new Error(`${name} already has ${round2(dispatched)} MT dispatched, so it cannot be removed.`);
+          }
+          if (lot.qty + 0.0005 < dispatched) {
+            throw new Error(`${name}: quantity cannot be less than the ${round2(dispatched)} MT already dispatched.`);
+          }
+        }
+
+        const updated = await projectOrdersApi.updateProjectOrder(editOrder.db_id, {
+          created_at: payload.created_at,
+          party_name: payload.party_name,
+          po_number: payload.po_number,
+          product_details: payload.product_details,
+          delivery_details: deliveryDetailsPayload,
+        });
+        showToast(`Project Order ${editOrder.order_id} updated successfully!`);
+        triggerRefresh();
+        if (onOrderCreated) onOrderCreated(updated);
+        onClose();
+        return;
+      }
+
       const result = await projectOrdersApi.createProjectOrder(payload);
       showToast(`Project Order ${result.order_id || previewOrderId} created successfully!`);
       triggerRefresh();
       if (onOrderCreated) onOrderCreated(result);
       onClose();
     } catch (err) {
-      console.error('Error creating project order:', err);
-      alert('Failed to create project order: ' + err.message);
+      console.error(`Error ${isEdit ? 'updating' : 'creating'} project order:`, err);
+      alert(`Failed to ${isEdit ? 'update' : 'create'} project order: ${err.message}`);
     } finally {
       setLoading(false);
     }
@@ -695,18 +836,20 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
       isOpen={isOpen}
       onClose={onClose}
       title={
-        sarthakProject
-          ? 'New Project Order — Sarthak TMT'
-          : isJSWFirm
-            ? `New Project Order — ${selectedSubtype}`
-            : isEssarFirm
-              ? 'New Project Order — ESSAR Steel'
-              : 'New Project Order'
+        isEdit
+          ? `Edit Project Order — ${editOrder.order_id}`
+          : sarthakProject
+            ? 'Book Order — Sarthak TMT'
+            : isJSWFirm
+              ? `Book Order — ${selectedSubtype}`
+              : isEssarFirm
+                ? 'Book Order — ESSAR Steel'
+                : 'Book Order'
       }
       maxWidth="max-w-2xl"
     >
       <form onSubmit={handleSubmit} className="space-y-4">
-        {headerSlot}
+        {!isEdit && headerSlot}
 
         {/* Top Info Banner: Firm Name, Brand Subtype & Order ID */}
         <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl bg-slate-50 border border-slate-200">
@@ -1263,7 +1406,7 @@ export const CreateProjectOrderModal = ({ isOpen, onClose, onOrderCreated, defau
             ) : (
               <>
                 <CheckCircle2 className="w-4 h-4" />
-                <span>Save Project Order</span>
+                <span>{isEdit ? 'Update Project Order' : 'Save Project Order'}</span>
               </>
             )}
           </button>

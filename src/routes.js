@@ -8,6 +8,7 @@ export const TAB_PATHS = {
   pendency: '/pendency-report',
   attendance: '/attendance',
   'sales-visits': '/sales-visits',
+  'daily-sales-visit': '/daily-sales-visit',
   distributors: '/distributors',
   firms: '/firms',
   settings: '/settings',

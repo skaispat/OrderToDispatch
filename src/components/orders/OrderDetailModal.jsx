@@ -1,7 +1,9 @@
 import React from 'react';
 import { Modal } from '../common/Modal';
+import { Pencil } from 'lucide-react';
 
-export const OrderDetailModal = ({ isOpen, onClose, order }) => {
+// onEdit(order): optional; when given, an "Edit Order" button is shown
+export const OrderDetailModal = ({ isOpen, onClose, order, onEdit }) => {
   if (!order) return null;
 
   const qty = parseFloat(order.order_qty || 0);
@@ -103,7 +105,17 @@ export const OrderDetailModal = ({ isOpen, onClose, order }) => {
         </div>
 
         {/* Close Button */}
-        <div className="pt-2 flex justify-end">
+        <div className="pt-2 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+          {onEdit && (
+            <button
+              type="button"
+              onClick={() => onEdit(order)}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2.5 sm:py-2 rounded-lg bg-[#a81b1e] hover:bg-[#8e1518] text-xs font-bold text-white transition cursor-pointer"
+            >
+              <Pencil className="w-3.5 h-3.5" />
+              Edit Order
+            </button>
+          )}
           <button
             type="button"
             onClick={onClose}

@@ -51,6 +51,11 @@ export const DispatchModal = ({ isOpen, onClose, selectedOrder, onDispatched }) 
 
   const useLots = type === 'project' && plan.length > 0;
 
+  // Firm and brand of the order (brand = series such as One Helix when the order has one)
+  const firmName = selectedOrder?.firm_name || (type === 'retail' ? 'Sarthak TMT' : '');
+  const brandName =
+    selectedOrder?.product_details?.subtype || selectedOrder?.product_details?.brand || selectedOrder?.brand_name || '';
+
   const alreadyDispatched = roundDispatchQty(history.reduce((acc, r) => acc + (Number(r.dispatch_qty) || 0), 0));
   const remaining = Math.max(0, roundDispatchQty(orderQty - alreadyDispatched));
 
@@ -88,9 +93,8 @@ export const DispatchModal = ({ isOpen, onClose, selectedOrder, onDispatched }) 
       setPlan(info.plan || []);
       setHistory(rows);
       setLotInputs({});
-      const done = roundDispatchQty(rows.reduce((acc, r) => acc + (Number(r.dispatch_qty) || 0), 0));
-      const left = Math.max(0, roundDispatchQty(info.orderQty - done));
-      setDispatchQty(left > 0 ? String(left) : '');
+      // The user always types the dispatch qty (never pre-filled)
+      setDispatchQty('');
     } catch (err) {
       setInfoError(err?.message || 'Could not load order details.');
     } finally {
@@ -215,9 +219,18 @@ export const DispatchModal = ({ isOpen, onClose, selectedOrder, onDispatched }) 
                 <p className="text-slate-500 truncate">{selectedOrder?.party_name || selectedOrder?.distributorName}</p>
               )}
             </div>
-            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-white border border-slate-200 text-slate-700">
-              {selectedOrder?.brand_name || selectedOrder?.firm_name || 'Order'}
-            </span>
+            <div className="flex flex-wrap items-center justify-end gap-1.5">
+              {firmName && (
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-white border border-slate-200 text-slate-700">
+                  <span className="text-slate-400 font-semibold">Firm:</span> {firmName}
+                </span>
+              )}
+              {brandName && (
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-red-50 border border-red-200 text-[#a81b1e]">
+                  <span className="text-red-400 font-semibold">Brand:</span> {brandName}
+                </span>
+              )}
+            </div>
           </div>
 
           <div className="grid grid-cols-3 gap-2">

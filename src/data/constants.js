@@ -214,7 +214,7 @@ export function evaluateUserFirmAccess(user, firms) {
       isRestricted: true,
       isProhibited: true,
       isUnauthorized: true,
-      position: 'Unassigned',
+      position: '',
       firmName: 'Unassigned',
       rule: 'No position assigned: no access',
     };

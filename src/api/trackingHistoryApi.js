@@ -101,6 +101,7 @@ export const trackingHistoryApi = {
       select_value: payload.select_value ? String(payload.select_value).trim() : 'Dealer',
       longitude: lng,
       latitude: lat,
+      sales_person_id: payload.sales_person_id ? parseInt(payload.sales_person_id, 10) || null : null,
     };
 
     const { data, error } = await supabase

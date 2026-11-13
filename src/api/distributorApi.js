@@ -1,5 +1,12 @@
 import { supabase, fetchAllRows } from './client';
 
+// Text columns can hold the literal string 'null'; treat it (and blanks) as empty
+const cleanText = (v) => {
+  const t = v === null || v === undefined ? '' : String(v).trim();
+  return t.toLowerCase() === 'null' || t.toLowerCase() === 'undefined' ? '' : t;
+};
+
+
 export const distributorApi = {
   // Query distributor table directly from Supabase database
   async getDistributors(filters = {}) {
@@ -31,9 +38,9 @@ export const distributorApi = {
       ...d,
       id: d.id,
       name: d.name || d.distributor_name || d.firm_name || `Distributor #${d.id}`,
-      phone: d.phone || '',
-      address: d.address || '',
-      state: d.state || '',
+      phone: cleanText(d.phone),
+      address: cleanText(d.address),
+      state: cleanText(d.state),
       sales_person_id: d.sales_person_id,
       created_at: d.created_at,
     }));
@@ -49,7 +56,7 @@ export const distributorApi = {
       name: payload.name,
       phone: payload.phone || null,
       address: payload.address || null,
-      state: payload.state || 'Maharashtra',
+      state: payload.state,
       sales_person_id: payload.sales_person_id
         ? parseInt(payload.sales_person_id, 10)
         : null,

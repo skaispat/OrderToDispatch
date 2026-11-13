@@ -19,6 +19,24 @@ const fmtDate = (iso) => {
   return y && m && d ? `${d}-${m}-${y}` : iso;
 };
 
+const fmtRate = (n) => `₹${(Number(n) || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+
+// Rate per MT label: one rate, or "min – max" when an order's items / lots have different rates
+const rateLabel = (rates) => {
+  const list = [...new Set(rates.map((r) => Number(r) || 0).filter((r) => r > 0))].sort((a, b) => a - b);
+  if (list.length === 0) return '—';
+  if (list.length === 1) return fmtRate(list[0]);
+  return `${fmtRate(list[0])} – ${fmtRate(list[list.length - 1])}`;
+};
+
+// Project order rates: item / lot rates, else order value / order qty
+const projectRates = (o) => {
+  const rates = (o.items || []).map((it) => parseFloat(it.rate) || 0).filter((r) => r > 0);
+  if (rates.length) return rates;
+  const qty = Number(o.total_qty) || 0;
+  return qty > 0 && Number(o.total_value) > 0 ? [Number(o.total_value) / qty] : [];
+};
+
 // Retail party: distributor (and dealer when booked for one), else the firm / brand
 const retailParty = (o) => {
   const dist = o.distributorName && o.distributorName !== '—' ? o.distributorName : '';
@@ -97,6 +115,7 @@ export const PendencyReportPage = () => {
         date: o.date,
         firm: o.brand_name || 'Sarthak TMT',
         party: retailParty(o),
+        rate: rateLabel([o.order_value]),
         orderQty: Number(o.order_qty) || 0,
         dispatchQty: o.dispatched_qty,
         pendingQty: o.pending_qty,
@@ -113,6 +132,7 @@ export const PendencyReportPage = () => {
           o.brandId === 'jsw' || o.brandId === 'essar'
             ? o.firm_name || o.brand_name || '—'
             : projectParty(o, partyMap),
+        rate: rateLabel(projectRates(o)),
         orderQty: Number(o.total_qty) || 0,
         dispatchQty: o.dispatched_qty,
         pendingQty: o.pending_qty,
@@ -186,11 +206,11 @@ export const PendencyReportPage = () => {
 
   const exportCsv = () => {
     const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const header = ['Order ID', 'Order Date', 'Type', 'Party / Firm / Distributor', 'Order Qty (MT)', 'Dispatch Qty (MT)', 'Pending Qty (MT)'];
+    const header = ['Order ID', 'Order Date', 'Type', 'Party / Firm / Distributor', 'Rate / MT', 'Order Qty (MT)', 'Dispatch Qty (MT)', 'Pending Qty (MT)'];
     const typeLabel = (r) =>
       r.type === 'project' && (r.brandId === 'jsw' || r.brandId === 'essar') ? r.firm : r.type === 'project' ? 'Project' : 'Retail';
     const lines = filteredRows.map((r) =>
-      [r.orderId, fmtDate(r.date), typeLabel(r), r.party, fmtQty(r.orderQty), fmtQty(r.dispatchQty), fmtQty(r.pendingQty)]
+      [r.orderId, fmtDate(r.date), typeLabel(r), r.party, r.rate.replace(/₹/g, 'Rs '), fmtQty(r.orderQty), fmtQty(r.dispatchQty), fmtQty(r.pendingQty)]
         .map(esc)
         .join(',')
     );
@@ -293,15 +313,13 @@ export const PendencyReportPage = () => {
               <button
                 key={t.id}
                 onClick={() => setTypeFilter(t.id)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition cursor-pointer shrink-0 ${
-                  typeFilter === t.id ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                }`}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition cursor-pointer shrink-0 ${typeFilter === t.id ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                  }`}
               >
                 {t.label}
                 <span
-                  className={`ml-1.5 inline-flex min-w-[1.25rem] justify-center px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
-                    typeFilter === t.id ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'
-                  }`}
+                  className={`ml-1.5 inline-flex min-w-[1.25rem] justify-center px-1.5 py-0.5 rounded-full text-[10px] font-bold ${typeFilter === t.id ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'
+                    }`}
                 >
                   {typeCounts[t.id]}
                 </span>
@@ -346,7 +364,13 @@ export const PendencyReportPage = () => {
                   </div>
                   <TypeBadge row={r} />
                 </div>
-                <p className="text-xs font-bold text-slate-800">{r.party}</p>                <div className="grid grid-cols-3 gap-2 p-2.5 rounded-lg bg-slate-50 border border-slate-100 text-xs">
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-xs font-bold text-slate-800 min-w-0">{r.party}</p>
+                  <p className="text-[11px] text-slate-500 shrink-0 text-right">
+                    Rate: <strong className="font-mono text-slate-900">{r.rate}</strong> / MT
+                  </p>
+                </div>
+                <div className="grid grid-cols-3 gap-2 p-2.5 rounded-lg bg-slate-50 border border-slate-100 text-xs">
                   <div>
                     <span className="text-[10px] uppercase font-bold text-slate-500 block">Order</span>
                     <span className="font-mono font-bold text-slate-900">{fmtQty(r.orderQty)}</span>
@@ -383,6 +407,7 @@ export const PendencyReportPage = () => {
                     <th className="py-3 px-3.5">Order ID</th>
                     <th className="py-3 px-3.5">Order Date</th>
                     <th className="py-3 px-3.5">Party / Firm / Distributor</th>
+                    <th className="py-3 px-3.5 text-right whitespace-nowrap">Rate / MT</th>
                     <th className="py-3 px-3.5 text-right">Order Qty (MT)</th>
                     <th className="py-3 px-3.5 text-right">Dispatch Qty (MT)</th>
                     <th className="py-3 px-3.5 text-right">Pending Qty (MT)</th>
@@ -403,6 +428,7 @@ export const PendencyReportPage = () => {
                           {r.party}
                         </span>
                       </td>
+                      <td className="py-3 px-3.5 text-right font-mono font-bold text-slate-900 whitespace-nowrap">{r.rate}</td>
                       <td className="py-3 px-3.5 text-right font-mono text-slate-900">{fmtQty(r.orderQty)}</td>
                       <td className="py-3 px-3.5 text-right font-mono text-[#a81b1e]">{fmtQty(r.dispatchQty)}</td>
                       <td className="py-3 px-3.5 text-right font-mono font-black text-amber-700">{fmtQty(r.pendingQty)}</td>
@@ -411,7 +437,7 @@ export const PendencyReportPage = () => {
                 </tbody>
                 <tfoot className="bg-slate-50 border-t border-slate-200 font-bold">
                   <tr>
-                    <td colSpan={3} className="py-3 px-3.5 text-slate-600">
+                    <td colSpan={4} className="py-3 px-3.5 text-slate-600">
                       Total ({filteredRows.length} orders)
                     </td>
                     <td className="py-3 px-3.5 text-right font-mono text-slate-900">{fmtQty(totals.orderQty)}</td>

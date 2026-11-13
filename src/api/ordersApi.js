@@ -288,6 +288,49 @@ export const ordersApi = {
     return data;
   },
 
+  /**
+   * Updates an existing retail order (orders.id = dbId). order_id, brand and firm never change.
+   * payload: { date, distributor_id, dealer_id, order_qty, order_value (price / MT) }
+   */
+  /**
+   * Removes an order by its database id. Used only to roll back an order that was just
+   * created when the step saved alongside it (e.g. the sales visit) fails.
+   */
+  async deleteOrder(dbId) {
+    const { error } = await supabase.from('orders').delete().eq('id', dbId);
+    if (error) {
+      console.error('[ordersApi] Order delete error:', error);
+      throw new Error(error.message);
+    }
+  },
+
+  async updateOrder(dbId, payload) {
+    const id = Number(dbId);
+    if (!Number.isInteger(id) || id <= 0) throw new Error('Invalid order reference.');
+
+    const qty = parseFloat(payload.order_qty);
+    const price = parseFloat(payload.order_value);
+    if (!Number.isFinite(qty) || qty <= 0) throw new Error('Please enter a valid order quantity.');
+    if (!Number.isFinite(price) || price <= 0) throw new Error('Please enter a valid price.');
+
+    const dbPayload = {
+      distributor_id: payload.distributor_id ? parseInt(payload.distributor_id, 10) : null,
+      dealer_id: payload.dealer_id ? parseInt(payload.dealer_id, 10) : null,
+      order_qty: qty,
+      order_value: price,
+      total_order_value: Math.round(qty * price * 100) / 100,
+      ...(payload.date ? { created_at: new Date(payload.date).toISOString() } : {}),
+    };
+
+    const { data, error } = await supabase.from('orders').update(dbPayload).eq('id', id).select().single();
+    if (error) {
+      console.error('[ordersApi] Order update error:', error);
+      if (error.code === 'PGRST116') throw new Error('Order not found. It may have been deleted.');
+      throw new Error(error.message);
+    }
+    return data;
+  },
+
   async updateOrderStatus(orderId, newStatus, additionalData = {}) {
     try {
       const strId = String(orderId);

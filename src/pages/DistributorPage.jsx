@@ -17,7 +17,14 @@ import {
   ChevronDown,
   ChevronUp,
   ExternalLink,
+  Pencil,
 } from 'lucide-react';
+
+// Sales officer dropdowns list only users whose position is Area Sales Manager
+const isAreaSalesManager = (u) => {
+  const pos = String(u?.position || '').toLowerCase();
+  return pos.includes('area sales manager') || /\basm\b/.test(pos);
+};
 
 export const DistributorPage = () => {
   const { showToast } = useApp();
@@ -42,18 +49,21 @@ export const DistributorPage = () => {
   const [isAddDistOpen, setIsAddDistOpen] = useState(false);
   const [isAddDealerOpen, setIsAddDealerOpen] = useState(false);
   const [modalPreselectedDistId, setModalPreselectedDistId] = useState('');
+  // Record being edited in the distributor / dealer modal (null = adding a new one)
+  const [editingDist, setEditingDist] = useState(null);
+  const [editingDealer, setEditingDealer] = useState(null);
 
   // Form states - Distributor
   const [distName, setDistName] = useState('');
   const [distAddress, setDistAddress] = useState('');
-  const [distState, setDistState] = useState('Maharashtra');
+  const [distState, setDistState] = useState('');
   const [distPhone, setDistPhone] = useState('');
   const [distSalesPersonId, setDistSalesPersonId] = useState(isSalesRole ? user?.emp_id : '');
 
   // Form states - Dealer
   const [dealerName, setDealerName] = useState('');
   const [dealerAddress, setDealerAddress] = useState('');
-  const [dealerState, setDealerState] = useState('Maharashtra');
+  const [dealerState, setDealerState] = useState('');
   const [dealerPhone, setDealerPhone] = useState('');
   const [dealerAreaName, setDealerAreaName] = useState('');
   const [dealerDistId, setDealerDistId] = useState('');
@@ -118,9 +128,10 @@ export const DistributorPage = () => {
       if (distData && distData.length > 0 && !dealerDistId) {
         setDealerDistId(distData[0].id);
       }
-      if (userData && userData.length > 0) {
-        if (!distSalesPersonId) setDistSalesPersonId(userData[0].emp_id);
-        if (!dealerSalesPersonId) setDealerSalesPersonId(userData[0].emp_id);
+      const firstAsm = (userData || []).find(isAreaSalesManager);
+      if (firstAsm) {
+        if (!distSalesPersonId) setDistSalesPersonId(firstAsm.emp_id);
+        if (!dealerSalesPersonId) setDealerSalesPersonId(firstAsm.emp_id);
       }
     } catch (err) {
       console.error('Error fetching distributor/dealer data:', err);
@@ -140,7 +151,77 @@ export const DistributorPage = () => {
     }
   }, [isDistributor, distributorId, isSalesRole, visibleDistributorsForDropdown, dealerDistId]);
 
-  // Handle Add Distributor
+  // Area Sales Managers offered in the Sales Officer dropdowns; the record's current officer stays
+  // in the list while editing even if their position is different
+  const salesOfficerOptions = (currentId) =>
+    salesUsers.filter(
+      (u) => isAreaSalesManager(u) || (currentId && String(u.emp_id) === String(currentId))
+    );
+
+  // Only admins pick the sales officer; sales users / distributors keep the auto-assigned one
+  const canPickSalesOfficer = !isSalesRole && !isDistributor;
+
+  const openAddDistributor = () => {
+    setEditingDist(null);
+    setDistName('');
+    setDistAddress('');
+    setDistState('');
+    setDistPhone('');
+    if (isSalesRole) setDistSalesPersonId(user?.emp_id);
+    else setDistSalesPersonId(salesUsers.find(isAreaSalesManager)?.emp_id || '');
+    setIsAddDistOpen(true);
+  };
+
+  const openEditDistributor = (d) => {
+    setEditingDist(d);
+    setDistName(d.name || '');
+    setDistAddress(d.address || '');
+    setDistState(d.state || '');
+    setDistPhone(d.phone || '');
+    setDistSalesPersonId(d.sales_person_id ? String(d.sales_person_id) : '');
+    setIsAddDistOpen(true);
+  };
+
+  const closeDistModal = () => {
+    setIsAddDistOpen(false);
+    setEditingDist(null);
+  };
+
+  const resetDealerForm = () => {
+    setDealerName('');
+    setDealerAddress('');
+    setDealerState('');
+    setDealerPhone('');
+    setDealerAreaName('');
+    if (isSalesRole) setDealerSalesPersonId(user?.emp_id);
+    else if (!isDistributor) setDealerSalesPersonId(salesUsers.find(isAreaSalesManager)?.emp_id || '');
+  };
+
+  const openAddDealer = (distId) => {
+    setEditingDealer(null);
+    resetDealerForm();
+    if (distId) setDealerDistId(distId);
+    setIsAddDealerOpen(true);
+  };
+
+  const openEditDealer = (d) => {
+    setEditingDealer(d);
+    setDealerName(d.name || '');
+    setDealerAddress(d.address || '');
+    setDealerState(d.state || '');
+    setDealerPhone(d.phone || '');
+    setDealerAreaName(d.area_name || '');
+    setDealerDistId(d.distributor_id ? String(d.distributor_id) : '');
+    setDealerSalesPersonId(d.sales_person_id ? String(d.sales_person_id) : '');
+    setIsAddDealerOpen(true);
+  };
+
+  const closeDealerModal = () => {
+    setIsAddDealerOpen(false);
+    setEditingDealer(null);
+  };
+
+  // Handle Add / Edit Distributor
   const handleCreateDistributor = async (e) => {
     e.preventDefault();
     if (!canEditDistributors) {
@@ -149,6 +230,23 @@ export const DistributorPage = () => {
     }
     setLoading(true);
     try {
+      if (editingDist) {
+        await distributorApi.updateDistributor(editingDist.id, {
+          name: distName.trim(),
+          address: distAddress.trim() || null,
+          state: distState.trim() || null,
+          phone: distPhone.trim() || null,
+          // Admins can reassign the sales officer; everyone else keeps the current one
+          sales_person_id: canPickSalesOfficer
+            ? (distSalesPersonId ? parseInt(distSalesPersonId, 10) : null)
+            : editingDist.sales_person_id ?? null,
+        });
+        showToast(`Distributor ${distName} updated successfully!`);
+        closeDistModal();
+        fetchAllData();
+        return;
+      }
+
       const effectiveSalesId = isSalesRole
         ? (user?.emp_id ? parseInt(user.emp_id, 10) : null)
         : (distSalesPersonId ? parseInt(distSalesPersonId, 10) : null);
@@ -170,7 +268,7 @@ export const DistributorPage = () => {
       setDistAddress('');
       setDistPhone('');
     } catch (err) {
-      alert('Failed to add distributor: ' + err.message);
+      alert(`Failed to ${editingDist ? 'update' : 'add'} distributor: ${err.message}`);
     } finally {
       setLoading(false);
     }
@@ -185,6 +283,27 @@ export const DistributorPage = () => {
     }
     setLoading(true);
     try {
+      if (editingDealer) {
+        await dealerApi.updateDealer(editingDealer.id, {
+          name: dealerName.trim(),
+          address: dealerAddress.trim() || null,
+          state: dealerState.trim() || null,
+          phone: dealerPhone.trim() || null,
+          area_name: dealerAreaName.trim() || null,
+          // Distributors cannot move a dealer to another distributor
+          distributor_id: isDistributor
+            ? editingDealer.distributor_id ?? null
+            : (dealerDistId ? parseInt(dealerDistId, 10) : null),
+          sales_person_id: canPickSalesOfficer
+            ? (dealerSalesPersonId ? parseInt(dealerSalesPersonId, 10) : null)
+            : editingDealer.sales_person_id ?? null,
+        });
+        showToast(`Dealer ${dealerName} updated successfully!`);
+        closeDealerModal();
+        fetchAllData();
+        return;
+      }
+
       const targetDistId = isDistributor
         ? distributorId
         : (dealerDistId ? parseInt(dealerDistId, 10) : null);
@@ -215,16 +334,15 @@ export const DistributorPage = () => {
       setDealerPhone('');
       setDealerAreaName('');
     } catch (err) {
-      alert('Failed to add dealer: ' + err.message);
+      alert(`Failed to ${editingDealer ? 'update' : 'add'} dealer: ${err.message}`);
     } finally {
       setLoading(false);
     }
   };
 
   const openAddDealerForDistributor = (distId) => {
-    setDealerDistId(distId);
     setModalPreselectedDistId(distId);
-    setIsAddDealerOpen(true);
+    openAddDealer(distId);
   };
 
   // Filtered Distributors
@@ -352,10 +470,7 @@ export const DistributorPage = () => {
             null
           ) : isDistributor ? (
             <button
-              onClick={() => {
-                setDealerDistId(distributorId);
-                setIsAddDealerOpen(true);
-              }}
+              onClick={() => openAddDealer(distributorId)}
               className="flex items-center justify-center gap-1.5 rounded-lg bg-[#a81b1e] hover:bg-[#8e1518] px-3 sm:px-4 py-2 text-xs font-bold text-white shadow-xs transition cursor-pointer whitespace-nowrap"
             >
               <Plus className="w-4 h-4" />
@@ -363,7 +478,7 @@ export const DistributorPage = () => {
             </button>
           ) : activeSubTab === 'distributors' ? (
             <button
-              onClick={() => setIsAddDistOpen(true)}
+              onClick={openAddDistributor}
               className="flex items-center justify-center gap-1.5 rounded-lg bg-[#a81b1e] hover:bg-[#8e1518] px-3 sm:px-4 py-2 text-xs font-bold text-white shadow-xs transition cursor-pointer whitespace-nowrap"
             >
               <Plus className="w-4 h-4" />
@@ -371,7 +486,7 @@ export const DistributorPage = () => {
             </button>
           ) : (
             <button
-              onClick={() => setIsAddDealerOpen(true)}
+              onClick={() => openAddDealer()}
               className="flex items-center justify-center gap-1.5 rounded-lg bg-[#a81b1e] hover:bg-[#8e1518] px-3 sm:px-4 py-2 text-xs font-bold text-white shadow-xs transition cursor-pointer whitespace-nowrap"
             >
               <Plus className="w-4 h-4" />
@@ -554,13 +669,24 @@ export const DistributorPage = () => {
                       </div>
 
                       {canEditDistributors && (
-                        <button
-                          onClick={() => openAddDealerForDistributor(d.id)}
-                          className="shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold text-[#a81b1e] bg-red-50 hover:bg-red-100 border border-red-200 transition cursor-pointer"
-                        >
-                          <Plus className="w-3 h-3" />
-                          Add Dealer
-                        </button>
+                        <div className="shrink-0 flex flex-col items-end gap-1.5">
+                          <button
+                            onClick={() => openEditDistributor(d)}
+                            className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 transition cursor-pointer"
+                          >
+                            <Pencil className="w-3 h-3" />
+                            Edit
+                          </button>
+                          {!isDistributor && (
+                            <button
+                              onClick={() => openAddDealerForDistributor(d.id)}
+                              className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold text-[#a81b1e] bg-red-50 hover:bg-red-100 border border-red-200 transition cursor-pointer"
+                            >
+                              <Plus className="w-3 h-3" />
+                              Add Dealer
+                            </button>
+                          )}
+                        </div>
                       )}
                     </div>
 
@@ -622,11 +748,22 @@ export const DistributorPage = () => {
                             >
                               <div className="flex items-start justify-between gap-2">
                                 <span className="font-bold text-slate-900 break-words min-w-0">{dlr.name}</span>
-                                <span className="font-mono font-bold text-slate-500 text-[10px]">#{dlr.id}</span>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <span className="font-mono font-bold text-slate-500 text-[10px]">#{dlr.id}</span>
+                                  {canEditDistributors && (
+                                    <button
+                                      onClick={() => openEditDealer(dlr)}
+                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100 cursor-pointer"
+                                    >
+                                      <Pencil className="w-3 h-3" />
+                                      Edit
+                                    </button>
+                                  )}
+                                </div>
                               </div>
                               <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
                                 <span className="px-1.5 py-0.5 rounded bg-white border border-slate-200 text-slate-700 font-medium">
-                                  {dlr.area_name || 'Direct'}
+                                  {dlr.area_name || dlr.state || '—'}
                                 </span>
                                 {dlr.phone && <span className="font-mono">{dlr.phone}</span>}
                               </div>
@@ -737,13 +874,24 @@ export const DistributorPage = () => {
 
                             <td className="py-3 px-3.5 text-right">
                               {canEditDistributors && (
-                                <button
-                                  onClick={() => openAddDealerForDistributor(d.id)}
-                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold text-[#a81b1e] bg-red-50 hover:bg-red-100 border border-red-200 transition cursor-pointer"
-                                >
-                                  <Plus className="w-3 h-3" />
-                                  Add Dealer
-                                </button>
+                                <div className="inline-flex items-center gap-1.5">
+                                  <button
+                                    onClick={() => openEditDistributor(d)}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 transition cursor-pointer"
+                                  >
+                                    <Pencil className="w-3 h-3" />
+                                    Edit
+                                  </button>
+                                  {!isDistributor && (
+                                    <button
+                                      onClick={() => openAddDealerForDistributor(d.id)}
+                                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold text-[#a81b1e] bg-red-50 hover:bg-red-100 border border-red-200 transition cursor-pointer whitespace-nowrap"
+                                    >
+                                      <Plus className="w-3 h-3" />
+                                      Add Dealer
+                                    </button>
+                                  )}
+                                </div>
                               )}
                             </td>
                           </tr>
@@ -789,6 +937,7 @@ export const DistributorPage = () => {
                                             <th className="py-2 px-3">Area / City</th>
                                             <th className="py-2 px-3">Address</th>
                                             <th className="py-2 px-3">Contact Phone</th>
+                                            {canEditDistributors && <th className="py-2 px-3 text-right">Action</th>}
                                           </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-100 font-medium">
@@ -802,7 +951,7 @@ export const DistributorPage = () => {
                                               </td>
                                               <td className="py-2 px-3">
                                                 <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px] font-bold">
-                                                  {dlr.area_name || 'Direct'}
+                                                  {dlr.area_name || dlr.state || '—'}
                                                 </span>
                                               </td>
                                               <td className="py-2 px-3 text-slate-600">
@@ -811,6 +960,17 @@ export const DistributorPage = () => {
                                               <td className="py-2 px-3 font-mono text-slate-700">
                                                 {dlr.phone || '—'}
                                               </td>
+                                              {canEditDistributors && (
+                                                <td className="py-2 px-3 text-right">
+                                                  <button
+                                                    onClick={() => openEditDealer(dlr)}
+                                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 transition cursor-pointer"
+                                                  >
+                                                    <Pencil className="w-3 h-3" />
+                                                    Edit
+                                                  </button>
+                                                </td>
+                                              )}
                                             </tr>
                                           ))}
                                         </tbody>
@@ -927,9 +1087,11 @@ export const DistributorPage = () => {
                           <h3 className="font-bold text-slate-900 text-sm break-words min-w-0">{d.name}</h3>
                         </div>
                         <div className="flex flex-wrap items-center gap-1.5 mt-1">
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
-                            {d.area_name || 'Direct'}
-                          </span>
+                          {d.area_name && (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
+                              {d.area_name}
+                            </span>
+                          )}
                           {d.state && (
                             <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-slate-50 text-slate-600 border border-slate-100">
                               {d.state}
@@ -937,6 +1099,15 @@ export const DistributorPage = () => {
                           )}
                         </div>
                       </div>
+                      {canEditDistributors && (
+                        <button
+                          onClick={() => openEditDealer(d)}
+                          className="shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 transition cursor-pointer"
+                        >
+                          <Pencil className="w-3 h-3" />
+                          Edit
+                        </button>
+                      )}
                     </div>
 
                     {/* Parent Distributor Box */}
@@ -988,16 +1159,17 @@ export const DistributorPage = () => {
                     <th className="py-3 px-3.5">ID</th>
                     <th className="py-3 px-3.5">Dealer Name</th>
                     <th className="py-3 px-3.5">Assigned Distributor</th>
-                    <th className="py-3 px-3.5">Area & State</th>
                     <th className="py-3 px-3.5">Address</th>
+                    <th className="py-3 px-3.5">Area & State</th>
                     <th className="py-3 px-3.5">Phone</th>
                     <th className="py-3 px-3.5">Sales Officer</th>
+                    {canEditDistributors && <th className="py-3 px-3.5 text-right">Actions</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {paginatedDealers.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="py-8 text-center text-slate-400">
+                      <td colSpan={canEditDistributors ? 8 : 7} className="py-8 text-center text-slate-400">
                         {isDistributor
                           ? `No dealers mapped under ${currentDistributor?.name || 'your firm'} yet. Click "Add Dealer" above to register one.`
                           : isSalesRole
@@ -1032,12 +1204,19 @@ export const DistributorPage = () => {
                               <span className="text-slate-400">Direct / None</span>
                             )}
                           </td>
-                          <td className="py-3 px-3.5">
-                            <p className="font-semibold text-slate-900">{d.area_name || '—'}</p>
-                            <span className="text-[10px] text-slate-500">{d.state}</span>
-                          </td>
                           <td className="py-3 px-3.5 text-slate-600">
                             {d.address || '—'}
+                          </td>
+                          <td className="py-3 px-3.5">
+                            {/* No area: show only the state */}
+                            {d.area_name ? (
+                              <>
+                                <p className="font-semibold text-slate-900">{d.area_name}</p>
+                                {d.state && <span className="text-[10px] text-slate-500">{d.state}</span>}
+                              </>
+                            ) : (
+                              <p className="font-semibold text-slate-900">{d.state || '—'}</p>
+                            )}
                           </td>
                           <td className="py-3 px-3.5 font-mono text-slate-700">
                             {d.phone || '—'}
@@ -1049,6 +1228,17 @@ export const DistributorPage = () => {
                               <span className="text-slate-400">—</span>
                             )}
                           </td>
+                          {canEditDistributors && (
+                            <td className="py-3 px-3.5 text-right">
+                              <button
+                                onClick={() => openEditDealer(d)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 transition cursor-pointer"
+                              >
+                                <Pencil className="w-3 h-3" />
+                                Edit
+                              </button>
+                            </td>
+                          )}
                         </tr>
                       );
                     })
@@ -1075,8 +1265,8 @@ export const DistributorPage = () => {
       {/* ========================================================== */}
       <Modal
         isOpen={isAddDistOpen}
-        onClose={() => setIsAddDistOpen(false)}
-        title="Add New Distributor Partner"
+        onClose={closeDistModal}
+        title={editingDist ? `Edit Distributor — ${editingDist.name}` : 'Add New Distributor Partner'}
         maxWidth="max-w-md"
       >
         <form onSubmit={handleCreateDistributor} className="space-y-3.5">
@@ -1096,7 +1286,7 @@ export const DistributorPage = () => {
 
           <div>
             <label className="block text-xs font-bold text-slate-600 uppercase mb-1">
-              Warehouse / Yard Address
+              Distributor Address
             </label>
             <textarea
               rows={2}
@@ -1136,35 +1326,41 @@ export const DistributorPage = () => {
 
           <div>
             <label className="block text-xs font-bold text-slate-600 uppercase mb-1">
-              Assigned Corporate Sales Officer
+              Assigned Sales Officer
             </label>
-            {isSalesRole ? (
+            {canPickSalesOfficer ? (
+              <select
+                required
+                value={distSalesPersonId}
+                onChange={(e) => setDistSalesPersonId(e.target.value)}
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-[#a81b1e] focus:outline-none"
+              >
+                <option value="" disabled>Select Area Sales Manager</option>
+                {salesOfficerOptions(editingDist?.sales_person_id).map((u) => (
+                  <option key={u.emp_id} value={u.emp_id}>
+                    {u.full_name} ({u.position || u.role}) - ID: {u.emp_id}
+                  </option>
+                ))}
+              </select>
+            ) : editingDist ? (
+              <div className="p-2.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-bold text-slate-900">
+                {salesUsers.find((u) => String(u.emp_id) === String(editingDist.sales_person_id))?.full_name ||
+                  (editingDist.sales_person_id ? `ID: ${editingDist.sales_person_id}` : 'Unassigned')}
+              </div>
+            ) : (
               <div className="p-2.5 rounded-lg border border-red-200 bg-red-50/70 text-xs font-bold text-slate-900 flex flex-wrap items-center justify-between gap-2">
                 <span>{user?.full_name || user?.username} (ID: {user?.emp_id})</span>
                 <span className="text-[10px] uppercase font-bold text-[#a81b1e] bg-white px-2 py-0.5 rounded border border-red-200">
                   {user?.position || 'Sales Officer'} (Auto-Assigned)
                 </span>
               </div>
-            ) : (
-              <select
-                value={distSalesPersonId}
-                onChange={(e) => setDistSalesPersonId(e.target.value)}
-                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-[#a81b1e] focus:outline-none"
-              >
-                <option value="">Unassigned</option>
-                {salesUsers.map((u) => (
-                  <option key={u.emp_id} value={u.emp_id}>
-                    {u.full_name} ({u.role}) - ID: {u.emp_id}
-                  </option>
-                ))}
-              </select>
             )}
           </div>
 
           <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 sm:gap-2.5 pt-3 border-t border-slate-100">
             <button
               type="button"
-              onClick={() => setIsAddDistOpen(false)}
+              onClick={closeDistModal}
               className="px-3.5 py-2 sm:py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg border border-slate-200 sm:border-transparent transition cursor-pointer"
             >
               Cancel
@@ -1174,7 +1370,7 @@ export const DistributorPage = () => {
               disabled={loading}
               className="px-4 py-2 sm:py-1.5 rounded-lg bg-[#a81b1e] text-xs font-bold text-white hover:bg-[#8e1518] transition cursor-pointer disabled:opacity-50"
             >
-              {loading ? 'Saving...' : 'Save Distributor'}
+              {loading ? 'Saving...' : editingDist ? 'Update Distributor' : 'Save Distributor'}
             </button>
           </div>
         </form>
@@ -1185,8 +1381,8 @@ export const DistributorPage = () => {
       {/* ========================================================== */}
       <Modal
         isOpen={isAddDealerOpen}
-        onClose={() => setIsAddDealerOpen(false)}
-        title="Register Retail Dealer"
+        onClose={closeDealerModal}
+        title={editingDealer ? `Edit Dealer — ${editingDealer.name}` : 'Register Retail Dealer'}
         maxWidth="max-w-md"
       >
         <form onSubmit={handleCreateDealer} className="space-y-3.5">
@@ -1292,7 +1488,12 @@ export const DistributorPage = () => {
               <label className="block text-xs font-bold text-slate-600 uppercase mb-1">
                 Sales Officer
               </label>
-              {isDistributor ? (
+              {editingDealer && !canPickSalesOfficer ? (
+                <div className="p-2 rounded-lg border border-slate-200 bg-slate-50 text-xs font-bold text-slate-900">
+                  {salesUsers.find((u) => String(u.emp_id) === String(editingDealer.sales_person_id))?.full_name ||
+                    (editingDealer.sales_person_id ? `ID: ${editingDealer.sales_person_id}` : 'Unassigned')}
+                </div>
+              ) : isDistributor ? (
                 <div className="p-2 rounded-lg border border-slate-200 bg-slate-50 text-xs font-bold text-slate-900 flex flex-wrap items-center justify-between gap-2">
                   <span>{assignedSalesPerson?.full_name || 'Assigned Officer'}</span>
                   <span className="text-[10px] font-bold text-slate-500 bg-white px-1.5 py-0.5 rounded border border-slate-200">
@@ -1308,12 +1509,13 @@ export const DistributorPage = () => {
                 </div>
               ) : (
                 <select
+                  required
                   value={dealerSalesPersonId}
                   onChange={(e) => setDealerSalesPersonId(e.target.value)}
                   className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-[#a81b1e] focus:outline-none"
                 >
-                  <option value="">Unassigned</option>
-                  {salesUsers.map((u) => (
+                  <option value="" disabled>Select Area Sales Manager</option>
+                  {salesOfficerOptions(editingDealer?.sales_person_id).map((u) => (
                     <option key={u.emp_id} value={u.emp_id}>
                       {u.full_name}
                     </option>
@@ -1326,7 +1528,7 @@ export const DistributorPage = () => {
           <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 sm:gap-2.5 pt-3 border-t border-slate-100">
             <button
               type="button"
-              onClick={() => setIsAddDealerOpen(false)}
+              onClick={closeDealerModal}
               className="px-3.5 py-2 sm:py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg border border-slate-200 sm:border-transparent transition cursor-pointer"
             >
               Cancel
@@ -1336,7 +1538,7 @@ export const DistributorPage = () => {
               disabled={loading}
               className="px-4 py-2 sm:py-1.5 rounded-lg bg-[#a81b1e] text-xs font-bold text-white hover:bg-[#8e1518] transition cursor-pointer disabled:opacity-50"
             >
-              {loading ? 'Saving...' : 'Save Dealer'}
+              {loading ? 'Saving...' : editingDealer ? 'Update Dealer' : 'Save Dealer'}
             </button>
           </div>
         </form>

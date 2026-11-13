@@ -148,7 +148,7 @@ export const ProjectOrdersPage = () => {
             className="flex items-center justify-center gap-1.5 rounded-lg bg-[#a81b1e] hover:bg-[#8e1518] px-4 py-2 text-xs font-bold text-white shadow-xs transition cursor-pointer shrink-0"
           >
             <Plus className="w-4 h-4" />
-            New Project Order
+            Book Order
           </button>
         )}
       </div>
@@ -294,9 +294,9 @@ export const ProjectOrdersPage = () => {
                   <th className="py-3 px-3.5">Order ID & Date</th>
                   {!hidePartyColumn && <th className="py-3 px-3.5">Party / Client Name</th>}
                   <th className="py-3 px-3.5">PO Number</th>
-                  <th className="py-3 px-3.5">{hideSpecificationColumn ? 'Brand / Series' : 'Specification'}</th>
+                  <th className="py-3 px-3.5">{hideSpecificationColumn ? 'Brand' : 'Specification'}</th>
                   <th className="py-3 px-3.5">Products Summary</th>
-                  <th className="py-3 px-3.5 text-right">Tonnage</th>
+                  <th className="py-3 px-3.5 text-right">Ton</th>
                   <th className="py-3 px-3.5 text-right">Total Value</th>
                   <th className="py-3 px-3.5 text-center">Status</th>
                   <th className="py-3 px-3.5 text-right">Actions</th>
@@ -328,7 +328,7 @@ export const ProjectOrdersPage = () => {
               : `No project orders registered under ${firmAccess?.firmName || 'your firm'} yet.`}
           </p>
           <p className="text-xs text-slate-400 mt-1">
-            {searchTerm ? 'Try adjusting your search terms' : 'Click "New Project Order" to create one.'}
+            {searchTerm ? 'Try adjusting your search terms' : 'Click "Book Order" to create one.'}
           </p>
         </div>
       ) : (
@@ -379,13 +379,12 @@ export const ProjectOrdersPage = () => {
 
                     {orderSubtype ? (
                       <span
-                        className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-extrabold ${
-                          orderSubtype === 'One Helix'
-                            ? 'bg-purple-100 text-purple-800 border border-purple-200'
-                            : orderSubtype === 'ESSAR Steel' || orderSubtype === 'ESSAR' || isEssarFirm
+                        className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-extrabold ${orderSubtype === 'One Helix'
+                          ? 'bg-purple-100 text-purple-800 border border-purple-200'
+                          : orderSubtype === 'ESSAR Steel' || orderSubtype === 'ESSAR' || isEssarFirm
                             ? 'bg-amber-100 text-amber-800 border border-amber-200'
                             : 'bg-blue-100 text-blue-800 border border-blue-200'
-                        }`}
+                          }`}
                       >
                         {orderSubtype}
                       </span>
@@ -401,7 +400,7 @@ export const ProjectOrdersPage = () => {
                   {/* Metrics Box: Tonnage & Total Value */}
                   <div className="grid grid-cols-2 gap-2 p-2.5 rounded-lg bg-slate-50 border border-slate-100 text-xs">
                     <div>
-                      <span className="text-[10px] uppercase font-bold text-slate-500 block">Tonnage</span>
+                      <span className="text-[10px] uppercase font-bold text-slate-500 block">Ton</span>
                       <span className="font-mono font-bold text-slate-900 text-sm">
                         {o.total_qty.toFixed(2)} MT
                       </span>
@@ -442,9 +441,9 @@ export const ProjectOrdersPage = () => {
                     <th className="py-3 px-3.5">Order ID & Date</th>
                     {!hidePartyColumn && <th className="py-3 px-3.5">Party / Client Name</th>}
                     <th className="py-3 px-3.5">PO Number</th>
-                    <th className="py-3 px-3.5">{hideSpecificationColumn ? 'Brand / Series' : 'Specification'}</th>
+                    <th className="py-3 px-3.5">{hideSpecificationColumn ? 'Brand' : 'Specification'}</th>
                     <th className="py-3 px-3.5">Products Summary</th>
-                    <th className="py-3 px-3.5 text-right">Tonnage</th>
+                    <th className="py-3 px-3.5 text-right">Ton</th>
                     <th className="py-3 px-3.5 text-right">Total Value</th>
                     <th className="py-3 px-3.5 text-center">Status</th>
                     <th className="py-3 px-3.5 text-right">Actions</th>

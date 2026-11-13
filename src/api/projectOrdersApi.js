@@ -76,7 +76,7 @@ export const projectOrdersApi = {
           return name;
         }
       }
-    } catch (e) {}
+    } catch (e) { }
 
     const fallback = `Firm_${numericId}`;
     firmNameCache.set(numericId, fallback);
@@ -172,7 +172,7 @@ export const projectOrdersApi = {
         if (Array.isArray(local)) {
           for (const row of local) maxSeq = Math.max(maxSeq, seqOf(row?.order_id));
         }
-      } catch (e) {}
+      } catch (e) { }
 
       return `${prefix}${maxSeq + 1}`;
     } catch (err) {
@@ -221,7 +221,7 @@ export const projectOrdersApi = {
         // Supabase query succeeded: clear stale local storage so duplicate ghost rows never appear
         try {
           localStorage.removeItem(LOCAL_STORAGE_KEY);
-        } catch (e) {}
+        } catch (e) { }
       }
     } catch (e) {
       console.warn('[projectOrdersApi] Network error fetching project_orders:', e);
@@ -237,13 +237,13 @@ export const projectOrdersApi = {
         combined = Array.isArray(firmIdOrFilter)
           ? local.filter((o) => firmIdOrFilter.map(Number).includes(Number(o.firm_id)))
           : firmIdOrFilter === 'jsw'
-          ? local.filter((o) => Number(o.firm_id) === 2 || (o.order_id && o.order_id.includes('JSW')))
-          : firmIdOrFilter === 'essar'
-          ? local.filter((o) => [3, 6].includes(Number(o.firm_id)) || (o.order_id && o.order_id.includes('ESSAR')))
-          : firmIdOrFilter && firmIdOrFilter !== 'all' && !isNaN(parseInt(firmIdOrFilter, 10))
-          ? local.filter((o) => Number(o.firm_id) === Number(firmIdOrFilter))
-          : local;
-      } catch (e) {}
+            ? local.filter((o) => Number(o.firm_id) === 2 || (o.order_id && o.order_id.includes('JSW')))
+            : firmIdOrFilter === 'essar'
+              ? local.filter((o) => [3, 6].includes(Number(o.firm_id)) || (o.order_id && o.order_id.includes('ESSAR')))
+              : firmIdOrFilter && firmIdOrFilter !== 'all' && !isNaN(parseInt(firmIdOrFilter, 10))
+                ? local.filter((o) => Number(o.firm_id) === Number(firmIdOrFilter))
+                : local;
+      } catch (e) { }
     }
 
     // Lookup firms map from in-memory cache
@@ -259,13 +259,13 @@ export const projectOrdersApi = {
       const isSarthak = /sarthak/i.test(o.brand_type || '') || /\/SAR(-P)?\//.test(o.order_id || '');
       const isJSW =
         !isSarthak && (numFirmId === 2 ||
-        /jsw/i.test(o.order_id || '') ||
-        /jsw/i.test(firmName) ||
-        /jsw/i.test(o.brand_type || ''));
+          /jsw/i.test(o.order_id || '') ||
+          /jsw/i.test(firmName) ||
+          /jsw/i.test(o.brand_type || ''));
       const isEssar =
         !isSarthak && ([3, 6].includes(numFirmId) ||
-        /essar/i.test(o.order_id || '') ||
-        /essar/i.test(firmName));
+          /essar/i.test(o.order_id || '') ||
+          /essar/i.test(firmName));
 
       const brandId = isSarthak ? 'sarthak' : isJSW ? 'jsw' : isEssar ? 'essar' : 'other';
       const brandName = isSarthak ? 'Sarthak TMT' : isJSW ? 'JSW One' : isEssar ? 'Essar Steel' : firmName;
@@ -345,7 +345,7 @@ export const projectOrdersApi = {
   },
 
   /**
-   * Creates a new project order in Supabase with retry logic for race conditions on order_id.
+   * Creates a book order in Supabase with retry logic for race conditions on order_id.
    * payload.order_tag overrides the firm tag in the order id (e.g. 'SAR-P' -> OR/2026-27/SAR-P/1).
    * payload.brand_type is stored in project_orders.brand_type (e.g. 'Sarthak').
    * Errors are thrown so the user never sees an order as saved when the database rejected it.
@@ -379,7 +379,7 @@ export const projectOrdersApi = {
         // Clear offline cache to avoid stale duplicate rows
         try {
           localStorage.removeItem(LOCAL_STORAGE_KEY);
-        } catch (e) {}
+        } catch (e) { }
         if (dbPayload.party_name) {
           await this.savePartyDetails(data.id, dbPayload.party_name);
         }
@@ -465,18 +465,71 @@ export const projectOrdersApi = {
   },
 
   /**
+   * Updates an existing project order (order_id, firm and brand never change).
+   * payload: { created_at, party_name, po_number, product_details, delivery_details (object or null) }
+   * The party in project_party_details follows the order's party name.
+   */
+  async updateProjectOrder(id, payload) {
+    const dbId = Number(id);
+    if (!Number.isInteger(dbId) || dbId <= 0) throw new Error('Invalid project order reference.');
+
+    const partyName = payload.party_name ? String(payload.party_name).trim() : null;
+    const dbPayload = {
+      party_name: partyName,
+      po_number: payload.po_number ? String(payload.po_number).trim() : null,
+      product_details: payload.product_details || {},
+      delivery_details:
+        payload.delivery_details && typeof payload.delivery_details === 'object' ? payload.delivery_details : null,
+      ...(payload.created_at ? { created_at: new Date(payload.created_at).toISOString() } : {}),
+    };
+
+    const { data, error } = await supabase.from('project_orders').update(dbPayload).eq('id', dbId).select().single();
+    if (error) {
+      console.error('[projectOrdersApi] Failed to update project order:', error);
+      if (error.code === 'PGRST116') throw new Error('Project order not found. It may have been deleted.');
+      throw new Error(error.message || 'Could not update the project order. Please try again.');
+    }
+
+    try {
+      localStorage.removeItem(LOCAL_STORAGE_KEY);
+    } catch (e) { }
+
+    // Keep project_party_details in step with the order's party (order still saved if this fails)
+    if (partyName) {
+      try {
+        const { data: updated, error: partyError } = await supabase
+          .from('project_party_details')
+          .update({ party_name: partyName })
+          .eq('order_id', dbId)
+          .select('id');
+        if (partyError) throw partyError;
+        if (!updated || updated.length === 0) {
+          const { error: insertError } = await supabase
+            .from('project_party_details')
+            .insert([{ order_id: dbId, party_name: partyName }]);
+          if (insertError) throw insertError;
+        }
+      } catch (partyErr) {
+        console.warn('[projectOrdersApi] Order updated, but party details were not:', partyErr);
+      }
+    }
+
+    return data;
+  },
+
+  /**
    * Deletes a project order from Supabase and cleans local cache.
    */
   async deleteProjectOrder(id) {
     try {
       await supabase.from('project_orders').delete().eq('id', id);
-    } catch (e) {}
+    } catch (e) { }
 
     try {
       const local = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
       const filtered = local.filter((o) => String(o.id) !== String(id));
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(filtered));
-    } catch (e) {}
+    } catch (e) { }
 
     return true;
   },

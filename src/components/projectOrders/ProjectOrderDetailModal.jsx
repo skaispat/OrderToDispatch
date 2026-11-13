@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Modal } from '../common/Modal';
 import { dispatchApi, lotDispatchKey, lotDispatchTotals, formatIST } from '../../api/dispatchApi';
-import { Building, FileText, User, Calendar, Layers, MapPin, Package, Truck, History, Receipt } from 'lucide-react';
+import { Building, FileText, User, Calendar, Layers, MapPin, Package, Truck, History, Receipt, Pencil } from 'lucide-react';
 
 const EPS = 0.0005;
 const num = (v) => parseFloat(v) || 0;
@@ -26,7 +26,8 @@ const LotStatus = ({ pending, dispatched }) =>
     <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[10px] font-bold whitespace-nowrap">Pending</span>
   );
 
-export const ProjectOrderDetailModal = ({ isOpen, onClose, order }) => {
+// onEdit(order): optional; when given, an "Edit Order" button is shown
+export const ProjectOrderDetailModal = ({ isOpen, onClose, order, onEdit }) => {
   const [dispatches, setDispatches] = useState([]);
   const [loadingDispatches, setLoadingDispatches] = useState(false);
 
@@ -98,7 +99,7 @@ export const ProjectOrderDetailModal = ({ isOpen, onClose, order }) => {
         {/* Metric Cards */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
           <div className="p-3 rounded-xl border border-slate-200 bg-slate-50">
-            <span className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Total Tonnage</span>
+            <span className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Total Ton</span>
             <p className="text-base font-extrabold text-slate-900">
               {totalQty.toFixed(2)} <span className="text-xs font-semibold text-slate-500">MT</span>
             </p>
@@ -483,7 +484,16 @@ export const ProjectOrderDetailModal = ({ isOpen, onClose, order }) => {
           </div>
         )}
 
-        <div className="flex justify-end pt-2">
+        <div className="flex justify-end gap-2 pt-2">
+          {onEdit && (
+            <button
+              onClick={() => onEdit(order)}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#a81b1e] hover:bg-[#8e1518] text-xs font-bold text-white transition cursor-pointer"
+            >
+              <Pencil className="w-3.5 h-3.5" />
+              Edit Order
+            </button>
+          )}
           <button
             onClick={onClose}
             className="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-semibold text-slate-700 transition cursor-pointer"

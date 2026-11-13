@@ -11,6 +11,7 @@ import {
   Truck,
   CalendarCheck,
   MapPin,
+  CalendarDays,
   Building2,
   Settings,
   Lock,
@@ -26,6 +27,7 @@ const PAGE_ICONS = {
   dispatch: Truck,
   attendance: CalendarCheck,
   'sales-visits': MapPin,
+  'daily-sales-visit': CalendarDays,
   distributors: Building2,
   firms: Factory,
 };

@@ -35,6 +35,8 @@ export const OrdersPage = () => {
   const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
   const [orderFormType, setOrderFormType] = useState('standard'); // Sarthak form: 'standard' | 'project'
   const [dispatchModalOrder, setDispatchModalOrder] = useState(null);
+  const [editProjectOrder, setEditProjectOrder] = useState(null);
+  const [editRetailOrder, setEditRetailOrder] = useState(null);
 
   // Pagination for Project Orders view
   const [projectPage, setProjectPage] = useState(1);
@@ -296,15 +298,15 @@ export const OrdersPage = () => {
               ? `Live sales orders, managed by Sales Officer for Sarthak TMT`
               : hideProjectOrders
                 ? 'Retail Orders of Sarthak TMT'
-              : ownOrdersOnly
-                ? `Live order details, diameter schedules, and dispatch status for ${user?.full_name || user?.username || 'your account'}`
-                : effectiveBrand === 'jsw'
-                  ? 'Direct purchase orders for JSW One & One Helix'
-                  : effectiveBrand === 'essar'
-                    ? 'Direct purchase orders for ESSAR Steel'
-                    : firmAccess?.isRestricted
-                      ? `Retail and Project Orders of Sarthak TMT`
-                      : 'Manage rebar bookings across all authorized corporate brands and firms'}
+                : ownOrdersOnly
+                  ? `Live order details, diameter schedules, and dispatch status for ${user?.full_name || user?.username || 'your account'}`
+                  : effectiveBrand === 'jsw'
+                    ? 'Direct purchase orders for JSW One & One Helix'
+                    : effectiveBrand === 'essar'
+                      ? 'Direct purchase orders for ESSAR Steel'
+                      : firmAccess?.isRestricted
+                        ? `Retail and Project Orders of Sarthak TMT`
+                        : 'Manage rebar bookings across all authorized corporate brands and firms'}
           </p>
         </div>
 
@@ -318,7 +320,7 @@ export const OrdersPage = () => {
             className="shrink-0 flex items-center justify-center gap-1.5 rounded-lg bg-[#a81b1e] hover:bg-[#8e1518] px-3 sm:px-4 py-2 text-xs font-bold text-white shadow-xs transition cursor-pointer whitespace-nowrap"
           >
             <Plus className="w-4 h-4" />
-            {isDistributor ? 'Book Indent' : isProjectBrand ? 'New Project Order' : 'Book Order'}
+            {isDistributor ? 'Book Indent' : isProjectBrand ? 'Book Order' : 'Book Order'}
           </button>
         )}
       </div>
@@ -437,7 +439,7 @@ export const OrdersPage = () => {
                     <th className="py-3 px-3.5 whitespace-nowrap">Order Date</th>
                     {!hidePartyColumn && <th className="py-3 px-3.5">Party / Client Name</th>}
                     <th className="py-3 px-3.5">PO Number</th>
-                    <th className="py-3 px-3.5">{hideSpecificationColumn ? 'Brand / Series' : 'Sizes'}</th>
+                    <th className="py-3 px-3.5">{hideSpecificationColumn ? 'Brand' : 'Sizes'}</th>
                     <th className="py-3 px-3.5">Products Summary</th>
                     {showDeliveryColumns && (
                       <>
@@ -447,7 +449,7 @@ export const OrdersPage = () => {
                         <th className="py-3 px-3.5">Lots</th>
                       </>
                     )}
-                    <th className="py-3 px-3.5 text-right">Tonnage</th>
+                    <th className="py-3 px-3.5 text-right">Ton</th>
                     <th className="py-3 px-3.5 text-right">Total Value</th>
                     <th className="py-3 px-3.5 text-center">Status</th>
                     <th className="py-3 px-3.5 text-right">Action</th>
@@ -566,7 +568,7 @@ export const OrdersPage = () => {
                     {/* Metrics Box: Tonnage & Total Value */}
                     <div className="grid grid-cols-2 gap-2 p-2.5 rounded-lg bg-slate-50 border border-slate-100 text-xs">
                       <div>
-                        <span className="text-[10px] uppercase font-bold text-slate-500 block">Tonnage</span>
+                        <span className="text-[10px] uppercase font-bold text-slate-500 block">Ton</span>
                         <span className="font-mono font-bold text-slate-900 text-sm">
                           {(o.total_qty || 0).toFixed(2)} MT
                         </span>
@@ -619,17 +621,17 @@ export const OrdersPage = () => {
                       <th className="py-3 px-3.5 whitespace-nowrap">Order Date</th>
                       {!hidePartyColumn && <th className="py-3 px-3.5">Party / Client Name</th>}
                       <th className="py-3 px-3.5">PO Number</th>
-                      <th className="py-3 px-3.5">{hideSpecificationColumn ? 'Brand / Series' : 'Sizes'}</th>
+                      <th className="py-3 px-3.5">{hideSpecificationColumn ? 'Brand' : 'Sizes'}</th>
                       <th className="py-3 px-3.5">Products Summary</th>
-                    {showDeliveryColumns && (
-                      <>
-                        <th className="py-3 px-3.5">Consignee</th>
-                        <th className="py-3 px-3.5">Grade</th>
-                        <th className="py-3 px-3.5">Section</th>
-                        <th className="py-3 px-3.5">Lots</th>
-                      </>
-                    )}
-                      <th className="py-3 px-3.5 text-right">Tonnage</th>
+                      {showDeliveryColumns && (
+                        <>
+                          <th className="py-3 px-3.5">Consignee</th>
+                          <th className="py-3 px-3.5">Grade</th>
+                          <th className="py-3 px-3.5">Section</th>
+                          <th className="py-3 px-3.5">Lots</th>
+                        </>
+                      )}
+                      <th className="py-3 px-3.5 text-right"></th>
                       <th className="py-3 px-3.5 text-right">Total Value</th>
                       <th className="py-3 px-3.5 text-center">Status</th>
                       <th className="py-3 px-3.5 text-right">Action</th>
@@ -843,6 +845,7 @@ export const OrdersPage = () => {
           orders={filteredOrders}
           loading={loading}
           onOpenDispatch={canDispatch ? (order) => openDispatch(order, 'retail') : undefined}
+          onEditOrder={canCreateOrders ? (order) => setEditRetailOrder(order) : undefined}
         />
       )}
 
@@ -880,7 +883,38 @@ export const OrdersPage = () => {
         isOpen={Boolean(selectedProjectOrder)}
         onClose={() => setSelectedProjectOrder(null)}
         order={selectedProjectOrder}
+        onEdit={
+          // Sarthak project orders are edited by Project Managers / Super Admins (same as booking them)
+          selectedProjectOrder &&
+            canCreateOrders &&
+            (selectedProjectOrder.brandId !== 'sarthak' || isProjectManager || isSuperAdmin)
+            ? (o) => {
+              setSelectedProjectOrder(null);
+              setEditProjectOrder(o);
+            }
+            : undefined
+        }
       />
+
+      {/* Edit an existing retail order */}
+      {editRetailOrder && (
+        <CreateOrderModal
+          isOpen={Boolean(editRetailOrder) && canCreateOrders}
+          onClose={() => setEditRetailOrder(null)}
+          editOrder={editRetailOrder}
+        />
+      )}
+
+      {/* Edit an existing project order (any firm) */}
+      {editProjectOrder && (
+        <CreateProjectOrderModal
+          isOpen={Boolean(editProjectOrder) && canCreateOrders}
+          onClose={() => setEditProjectOrder(null)}
+          editOrder={editProjectOrder}
+          sarthakProject={editProjectOrder.brandId === 'sarthak'}
+          defaultFirmId={editProjectOrder.firm_id}
+        />
+      )}
 
       <DispatchModal
         isOpen={Boolean(dispatchModalOrder) && canDispatch}

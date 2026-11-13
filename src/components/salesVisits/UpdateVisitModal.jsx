@@ -1,17 +1,17 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Modal } from '../common/Modal';
 import { trackingHistoryApi } from '../../api/trackingHistoryApi';
+import { ordersApi } from '../../api/ordersApi';
 import { Search, X, Navigation, CheckCircle2, Store, Building2, ChevronDown } from 'lucide-react';
 
 const STAGES = [
-  'First Visit/ Call',
+
   'Follow-Up',
   'Order Received',
-  'Order Not Received',
-  'Payment Collection',
   'Not Interested',
 ];
 const PRIORITIES = ['Hot', 'Warm', 'Cold'];
+const DEFAULT_BRAND = 'Sarthak TMT';
 
 const istToday = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 
@@ -110,9 +110,8 @@ const PartyPicker = ({ options, value, onChange, placeholder, disabled }) => {
                         setOpen(false);
                         setQuery('');
                       }}
-                      className={`w-full text-left px-3 py-2 text-xs cursor-pointer ${
-                        isSel ? 'bg-red-50 text-[#a81b1e]' : 'hover:bg-slate-50 text-slate-800'
-                      }`}
+                      className={`w-full text-left px-3 py-2 text-xs cursor-pointer ${isSel ? 'bg-red-50 text-[#a81b1e]' : 'hover:bg-slate-50 text-slate-800'
+                        }`}
                     >
                       <span className="flex items-center justify-between gap-2">
                         <span className="font-bold truncate">{o.name || `#${o.id}`}</span>
@@ -143,7 +142,7 @@ const PartyPicker = ({ options, value, onChange, placeholder, disabled }) => {
  * Only dealers / distributors assigned to the sales manager can be picked; the visit is saved
  * to tracking_history under the logged-in user's name.
  */
-export const UpdateVisitModal = ({ isOpen, onClose, onSaved, userName, dealers, distributors }) => {
+export const UpdateVisitModal = ({ isOpen, onClose, onSaved, userName, userId, dealers, distributors }) => {
   const [category, setCategory] = useState('Dealer');
   const [partyId, setPartyId] = useState('');
   const [areaName, setAreaName] = useState('');
@@ -154,7 +153,9 @@ export const UpdateVisitModal = ({ isOpen, onClose, onSaved, userName, dealers, 
   const [nextDate, setNextDate] = useState('');
   const [orderQty, setOrderQty] = useState('');
   const [orderProducts, setOrderProducts] = useState('');
-  const [orderValue, setOrderValue] = useState('');
+  const [orderRate, setOrderRate] = useState('');
+  const [poNumber, setPoNumber] = useState('');
+  const [brandName, setBrandName] = useState(DEFAULT_BRAND);
   const [paymentReceived, setPaymentReceived] = useState('');
   const [geo, setGeo] = useState({ lat: null, lng: null });
   const [locating, setLocating] = useState(false);
@@ -174,6 +175,7 @@ export const UpdateVisitModal = ({ isOpen, onClose, onSaved, userName, dealers, 
         area: d.area_name && d.area_name !== 'null' ? d.area_name : d.address || '',
         parent: d.distributor_id ? distributorNames.get(String(d.distributor_id)) || '' : '',
         phone: d.phone || '',
+        distributorId: d.distributor_id || null,
       })),
     [dealers, distributorNames]
   );
@@ -204,7 +206,9 @@ export const UpdateVisitModal = ({ isOpen, onClose, onSaved, userName, dealers, 
     setNextDate('');
     setOrderQty('');
     setOrderProducts('');
-    setOrderValue('');
+    setOrderRate('');
+    setPoNumber('');
+    setBrandName(DEFAULT_BRAND);
     setPaymentReceived('');
     setFormError(null);
     setGeo({ lat: null, lng: null });
@@ -229,6 +233,8 @@ export const UpdateVisitModal = ({ isOpen, onClose, onSaved, userName, dealers, 
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
+
+  const orderTotal = (Number(orderQty) || 0) * (Number(orderRate) || 0);
 
   const pickParty = (o) => {
     setPartyId(String(o.id));
@@ -255,22 +261,43 @@ export const UpdateVisitModal = ({ isOpen, onClose, onSaved, userName, dealers, 
       setFormError('Next follow-up date cannot be in the past.');
       return;
     }
+    // "Order Received" also books an order in the orders table, so qty, rate and product are required
     if (stage === 'Order Received') {
       const qty = Number(orderQty);
-      if (orderQty !== '' && (!Number.isFinite(qty) || qty <= 0)) {
+      if (orderQty === '' || !Number.isFinite(qty) || qty <= 0) {
         setFormError('Order quantity must be a positive number.');
         return;
       }
-      const val = Number(orderValue);
-      if (orderValue !== '' && (!Number.isFinite(val) || val < 0)) {
-        setFormError('Order value cannot be negative.');
+      const rate = Number(orderRate);
+      if (orderRate === '' || !Number.isFinite(rate) || rate <= 0) {
+        setFormError('Rate per MT must be a positive number.');
+        return;
+      }
+      if (!orderProducts.trim()) {
+        setFormError('Please enter the product description.');
         return;
       }
     }
 
     setSubmitting(true);
+    const isOrder = stage === 'Order Received';
+    let createdOrder = null;
     try {
-      const isOrder = stage === 'Order Received';
+      // Book the order first; if saving the visit then fails, the order is removed again
+      if (isOrder) {
+        const isDealer = category === 'Dealer';
+        createdOrder = await ordersApi.createOrder({
+          dealer_id: isDealer ? selectedParty.id : null,
+          distributor_id: isDealer ? selectedParty.distributorId : selectedParty.id,
+          sales_person_id: userId || null,
+          po_number: poNumber.trim() || null,
+          brand_name: brandName.trim() || DEFAULT_BRAND,
+          product_description: orderProducts.trim(),
+          order_qty: orderQty,
+          order_value: orderRate,
+        });
+      }
+
       await trackingHistoryApi.createVisit({
         select_value: category,
         deler_distributer_site_name: selectedParty.name,
@@ -284,9 +311,10 @@ export const UpdateVisitModal = ({ isOpen, onClose, onSaved, userName, dealers, 
         next_date_of_call: nextDate || null,
         order_qty: isOrder && orderQty !== '' ? orderQty : null,
         order_products: isOrder ? orderProducts.trim() || null : null,
-        value_of_order: isOrder && orderValue !== '' ? orderValue : null,
+        value_of_order: isOrder ? String(orderTotal) : null,
         payment_yes_no: stage === 'Payment Collection' ? paymentReceived || null : null,
         sales_person_name: userName,
+        sales_person_id: userId || null,
         latitude: geo.lat,
         longitude: geo.lng,
       });
@@ -294,6 +322,13 @@ export const UpdateVisitModal = ({ isOpen, onClose, onSaved, userName, dealers, 
       onClose();
     } catch (err) {
       console.error('Update visit error:', err);
+      if (createdOrder?.id) {
+        try {
+          await ordersApi.deleteOrder(createdOrder.id);
+        } catch (rollbackErr) {
+          console.error('Order rollback error:', rollbackErr);
+        }
+      }
       setFormError(err?.message || 'Failed to save the visit update.');
     } finally {
       setSubmitting(false);
@@ -301,7 +336,7 @@ export const UpdateVisitModal = ({ isOpen, onClose, onSaved, userName, dealers, 
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={submitting ? () => {} : onClose} title="Update Visit" maxWidth="max-w-xl">
+    <Modal isOpen={isOpen} onClose={submitting ? () => { } : onClose} title="Update Visit" maxWidth="max-w-xl">
       <form onSubmit={handleSubmit} className="space-y-4">
         {formError && (
           <div className="p-3 rounded-lg border border-red-200 bg-red-50 text-xs text-[#a81b1e]">{formError}</div>
@@ -320,9 +355,8 @@ export const UpdateVisitModal = ({ isOpen, onClose, onSaved, userName, dealers, 
                 type="button"
                 disabled={count === 0}
                 onClick={() => switchCategory(id)}
-                className={`flex items-center justify-center gap-1.5 py-2 text-xs font-bold rounded-lg border transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
-                  category === id ? 'bg-red-50 border-[#a81b1e] text-[#a81b1e]' : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-                }`}
+                className={`flex items-center justify-center gap-1.5 py-2 text-xs font-bold rounded-lg border transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${category === id ? 'bg-red-50 border-[#a81b1e] text-[#a81b1e]' : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                  }`}
               >
                 <Icon className="w-3.5 h-3.5" />
                 {id}
@@ -399,15 +433,14 @@ export const UpdateVisitModal = ({ isOpen, onClose, onSaved, userName, dealers, 
                   key={p}
                   type="button"
                   onClick={() => setPriority(p)}
-                  className={`py-2 text-xs font-bold rounded-lg border transition cursor-pointer ${
-                    priority === p
-                      ? p === 'Hot'
-                        ? 'bg-rose-50 border-rose-500 text-rose-700'
-                        : p === 'Warm'
-                          ? 'bg-amber-50 border-amber-500 text-amber-700'
-                          : 'bg-slate-100 border-slate-500 text-slate-800'
-                      : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-                  }`}
+                  className={`py-2 text-xs font-bold rounded-lg border transition cursor-pointer ${priority === p
+                    ? p === 'Hot'
+                      ? 'bg-rose-50 border-rose-500 text-rose-700'
+                      : p === 'Warm'
+                        ? 'bg-amber-50 border-amber-500 text-amber-700'
+                        : 'bg-slate-100 border-slate-500 text-slate-800'
+                    : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
                 >
                   {p}
                 </button>
@@ -461,63 +494,76 @@ export const UpdateVisitModal = ({ isOpen, onClose, onSaved, userName, dealers, 
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
               Order Details
             </div>
+            <p className="text-[11px] text-emerald-800/80">This order will also be created in Orders.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <label className="block">
+                <span className="text-[11px] font-bold text-slate-600">PO Number</span>
+                <input
+                  type="text"
+                  value={poNumber}
+                  onChange={(e) => setPoNumber(e.target.value)}
+                  maxLength={100}
+                  placeholder="Optional"
+                  className={inputCls}
+                />
+              </label>
+              <label className="block">
+                <span className="text-[11px] font-bold text-slate-600">Brand Name *</span>
+                <input
+                  type="text"
+                  value={brandName}
+                  onChange={(e) => setBrandName(e.target.value)}
+                  maxLength={100}
+                  required
+                  className={inputCls}
+                />
+              </label>
+            </div>
+            <label className="block">
+              <span className="text-[11px] font-bold text-slate-600">Product Description *</span>
+              <input
+                type="text"
+                value={orderProducts}
+                onChange={(e) => setOrderProducts(e.target.value)}
+                maxLength={300}
+                required
+                placeholder="e.g. TMT Fe 550D - 12mm, 16mm"
+                className={inputCls}
+              />
+            </label>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               <label className="block">
-                <span className="text-[11px] font-bold text-slate-600">Quantity (MT)</span>
+                <span className="text-[11px] font-bold text-slate-600">Quantity (MT) *</span>
                 <input
                   type="number"
                   step="any"
                   min="0"
                   value={orderQty}
                   onChange={(e) => setOrderQty(e.target.value)}
+                  required
                   placeholder="e.g. 25"
                   className={inputCls}
                 />
               </label>
               <label className="block">
-                <span className="text-[11px] font-bold text-slate-600">Products / Sizes</span>
-                <input
-                  type="text"
-                  value={orderProducts}
-                  onChange={(e) => setOrderProducts(e.target.value)}
-                  maxLength={300}
-                  placeholder="e.g. 12mm, 16mm"
-                  className={inputCls}
-                />
-              </label>
-              <label className="block">
-                <span className="text-[11px] font-bold text-slate-600">Order Value (₹)</span>
+                <span className="text-[11px] font-bold text-slate-600">Rate (₹ / MT) *</span>
                 <input
                   type="number"
                   step="any"
                   min="0"
-                  value={orderValue}
-                  onChange={(e) => setOrderValue(e.target.value)}
-                  placeholder="₹ Total"
+                  value={orderRate}
+                  onChange={(e) => setOrderRate(e.target.value)}
+                  required
+                  placeholder="e.g. 52000"
                   className={inputCls}
                 />
               </label>
-            </div>
-          </div>
-        )}
-
-        {/* Payment */}
-        {stage === 'Payment Collection' && (
-          <div>
-            <span className={labelCls}>Payment Received?</span>
-            <div className="grid grid-cols-2 gap-1.5 mt-1">
-              {['Yes', 'No'].map((v) => (
-                <button
-                  key={v}
-                  type="button"
-                  onClick={() => setPaymentReceived(v)}
-                  className={`py-2 text-xs font-bold rounded-lg border transition cursor-pointer ${
-                    paymentReceived === v ? 'bg-red-50 border-[#a81b1e] text-[#a81b1e]' : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-                  }`}
-                >
-                  {v}
-                </button>
-              ))}
+              <div>
+                <span className="text-[11px] font-bold text-slate-600">Order Value (₹)</span>
+                <div className="mt-1 px-3 py-2 text-xs rounded-lg border border-emerald-200 bg-white font-bold text-slate-900">
+                  ₹{orderTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                </div>
+              </div>
             </div>
           </div>
         )}

@@ -4,23 +4,19 @@ import { StatusBadge } from '../common/StatusBadge';
 import { OrderDetailModal } from './OrderDetailModal';
 import { Pagination } from '../common/Pagination';
 import { useAuth } from '../../context/AuthContext';
-import { ordersApi } from '../../api/ordersApi';
-import { useApp } from '../../context/AppContext';
 import {
   ChevronDown,
   ChevronUp,
   Truck,
-  CheckCircle,
   Building,
   Store,
   Eye,
 } from 'lucide-react';
 
-export const OrdersTable = ({ orders = [], onOpenDispatch, onViewDetails, loading = false }) => {
+// onEditOrder(order): optional; when given, the details modal shows an "Edit Order" button
+export const OrdersTable = ({ orders = [], onOpenDispatch, onViewDetails, onEditOrder, loading = false }) => {
   const { isASM, isDistributor, isSalesPerson, canEdit } = useAuth();
   const canDispatch = canEdit('dispatch');
-  const canApprove = canEdit('orders');
-  const { triggerRefresh, showToast } = useApp();
   const [expandedOrderId, setExpandedOrderId] = useState(null);
   const [modalOrder, setModalOrder] = useState(null);
 
@@ -46,20 +42,6 @@ export const OrdersTable = ({ orders = [], onOpenDispatch, onViewDetails, loadin
       onViewDetails(order);
     } else {
       setModalOrder(order);
-    }
-  };
-
-  const handleStatusChange = async (orderId, newStatus) => {
-    if (!canApprove) {
-      alert('Access Denied: You have view-only access to Orders.');
-      return;
-    }
-    try {
-      await ordersApi.updateOrderStatus(orderId, newStatus);
-      showToast(`Order ${orderId} updated to ${newStatus}`);
-      triggerRefresh();
-    } catch (err) {
-      alert('Error updating status: ' + err.message);
     }
   };
 
@@ -459,15 +441,6 @@ export const OrdersTable = ({ orders = [], onOpenDispatch, onViewDetails, loadin
                             </button>
                           )}
 
-                          {canApprove && order.status === 'pending' && (
-                            <button
-                              onClick={() => handleStatusChange(order.id, 'approved')}
-                              className="p-1 rounded-md bg-red-50 text-[#a81b1e] border border-red-200 hover:bg-red-100 transition cursor-pointer"
-                              title="Approve"
-                            >
-                              <CheckCircle className="w-3.5 h-3.5" />
-                            </button>
-                          )}
                         </div>
                       </td>
                     </tr>
@@ -517,6 +490,14 @@ export const OrdersTable = ({ orders = [], onOpenDispatch, onViewDetails, loadin
         isOpen={Boolean(modalOrder)}
         onClose={() => setModalOrder(null)}
         order={modalOrder}
+        onEdit={
+          onEditOrder
+            ? (o) => {
+              setModalOrder(null);
+              onEditOrder(o);
+            }
+            : undefined
+        }
       />
     </div>
   );

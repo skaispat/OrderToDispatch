@@ -757,7 +757,7 @@ export const AdminDashboard = () => {
 
                           <div className="grid grid-cols-2 gap-2 p-2 rounded-lg bg-slate-50 text-xs">
                             <div>
-                              <span className="text-[10px] text-slate-500 font-bold block">Tonnage</span>
+                              <span className="text-[10px] text-slate-500 font-bold block">Ton</span>
                               <span className="font-mono font-bold text-slate-900">
                                 {(o.total_qty || 0).toFixed(2)} MT
                               </span>
@@ -792,9 +792,9 @@ export const AdminDashboard = () => {
                         <tr>
                           <th className="py-3 px-3.5">Order ID & Date</th>
                           {!hidePartyColumn && <th className="py-3 px-3.5">Party / Client</th>}
-                          <th className="py-3 px-3.5">{hideSpecificationColumn ? 'Brand / Series' : 'Specification'}</th>
+                          <th className="py-3 px-3.5">{hideSpecificationColumn ? 'Brand' : 'Specification'}</th>
                           <th className="py-3 px-3.5">PO Number</th>
-                          <th className="py-3 px-3.5 text-right">Tonnage</th>
+                          <th className="py-3 px-3.5 text-right">Ton</th>
                           <th className="py-3 px-3.5 text-right">Order Value</th>
                           <th className="py-3 px-3.5 text-center">Status</th>
                           <th className="py-3 px-3.5 text-right">Action</th>

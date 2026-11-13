@@ -71,6 +71,14 @@ export const APP_PAGES = [
     supportsEdit: true,
   },
   {
+    id: 'daily-sales-visit',
+    label: 'Daily Sales Visit',
+    description: 'Day-wise report of dealer / distributor / site visits',
+    viewHelp: 'See the visits of a day',
+    editHelp: null,
+    supportsEdit: false,
+  },
+  {
     id: 'distributors',
     label: 'Distributors & Dealers',
     description: 'Distributor and dealer network',

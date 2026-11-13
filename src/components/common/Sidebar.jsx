@@ -9,6 +9,7 @@ import {
   Store,
   Settings,
   CalendarCheck,
+  CalendarDays,
   MapPin,
   LogOut,
   ChevronLeft,
@@ -35,6 +36,7 @@ export const Sidebar = ({ activeTab, onSelectTab, isOpen, onToggle, onClose }) =
     pendency: ClipboardList,
     attendance: CalendarCheck,
     'sales-visits': MapPin,
+    'daily-sales-visit': CalendarDays,
     distributors: Building2,
     firms: Factory,
   };
