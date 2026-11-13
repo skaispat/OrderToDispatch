@@ -17,6 +17,9 @@ const parseDetails = (value) => {
   }
 };
 
+const sectionsOf = (lot) => (Array.isArray(lot?.sections) ? lot.sections : []);
+const fmtPct = (v) => (v === null || v === undefined || v === '' ? '—' : `${num(v)}%`);
+
 const LotStatus = ({ pending, dispatched }) =>
   pending <= EPS ? (
     <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[10px] font-bold whitespace-nowrap">Dispatched</span>
@@ -288,6 +291,26 @@ export const ProjectOrderDetailModal = ({ isOpen, onClose, order, onEdit }) => {
                                   Delivery: {l.start_date || '—'} → {l.end_date || '—'}
                                 </p>
                               )}
+                              {sectionsOf(l).length > 0 && (
+                                <div className="rounded-md border border-slate-200 bg-slate-50/70 divide-y divide-slate-200/70">
+                                  {sectionsOf(l).map((sec, si) => (
+                                    <div key={si} className="px-2 py-1.5 text-[11px] space-y-0.5">
+                                      <div className="flex items-center justify-between gap-2">
+                                        <span className="px-1.5 py-0.5 rounded bg-white border border-slate-200 font-bold text-slate-800">
+                                          {sec.section || `Section ${si + 1}`}
+                                        </span>
+                                        <span className="font-mono font-bold text-slate-900">{fmtMT(sec.qty)}</span>
+                                      </div>
+                                      <div className="flex items-center justify-between gap-2 text-slate-600 font-mono">
+                                        <span>
+                                          {fmtINR(sec.price)}/MT · GST {fmtPct(sec.gst_percent)}
+                                        </span>
+                                        <span className="font-bold text-slate-900">{fmtINR(sec.total_price)}</span>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           );
                         })}
@@ -314,7 +337,8 @@ export const ProjectOrderDetailModal = ({ isOpen, onClose, order, onEdit }) => {
                             {lots.map((l, li) => {
                               const { dispatched, pending } = lotInfo(d, l);
                               return (
-                                <tr key={l.key || li} className="hover:bg-slate-50">
+                                <React.Fragment key={l.key || li}>
+                                <tr className="hover:bg-slate-50">
                                   <td className="py-2 px-3 font-bold text-slate-900 whitespace-nowrap">{l.lot_no || `Lot ${li + 1}`}</td>
                                   <td className="py-2 px-3 text-slate-700">{l.grade || d.grade || '—'}</td>
                                   <td className="py-2 px-3 text-slate-700">{l.section || d.section || '—'}</td>
@@ -335,6 +359,40 @@ export const ProjectOrderDetailModal = ({ isOpen, onClose, order, onEdit }) => {
                                     <LotStatus pending={pending} dispatched={dispatched} />
                                   </td>
                                 </tr>
+                                {sectionsOf(l).length > 0 && (
+                                  <tr className="bg-slate-50/60">
+                                    <td />
+                                    <td colSpan={9} className="py-1.5 pr-3">
+                                      <table className="w-full text-[11px] rounded-md border border-slate-200 bg-white overflow-hidden">
+                                        <thead className="text-[9px] font-bold uppercase text-slate-400 bg-slate-50 border-b border-slate-200">
+                                          <tr>
+                                            <th className="py-1 px-2 text-left">Section</th>
+                                            <th className="py-1 px-2 text-right">Qty</th>
+                                            <th className="py-1 px-2 text-right">Price / MT</th>
+                                            <th className="py-1 px-2 text-right">Taxable</th>
+                                            <th className="py-1 px-2 text-right">GST %</th>
+                                            <th className="py-1 px-2 text-right">GST Amount</th>
+                                            <th className="py-1 px-2 text-right">Total Price</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100 font-mono">
+                                          {sectionsOf(l).map((sec, si) => (
+                                            <tr key={si}>
+                                              <td className="py-1 px-2 font-sans font-bold text-slate-800">{sec.section || `Section ${si + 1}`}</td>
+                                              <td className="py-1 px-2 text-right font-bold text-slate-900 whitespace-nowrap">{fmtMT(sec.qty)}</td>
+                                              <td className="py-1 px-2 text-right text-slate-700">{fmtINR(sec.price)}</td>
+                                              <td className="py-1 px-2 text-right text-slate-700">{fmtINR(num(sec.qty) * num(sec.price))}</td>
+                                              <td className="py-1 px-2 text-right text-slate-700">{fmtPct(sec.gst_percent)}</td>
+                                              <td className="py-1 px-2 text-right text-slate-700">{fmtINR(sec.gst_amount)}</td>
+                                              <td className="py-1 px-2 text-right font-bold text-slate-900">{fmtINR(sec.total_price)}</td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </td>
+                                  </tr>
+                                )}
+                                </React.Fragment>
                               );
                             })}
                           </tbody>

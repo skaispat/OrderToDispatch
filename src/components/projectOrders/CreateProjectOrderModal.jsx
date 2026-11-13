@@ -32,36 +32,65 @@ const CONSIGNEE_NAME_MAX_LENGTH = 200;
 const SHORT_TEXT_MAX_LENGTH = 100; // lot no, grade, section
 const DEFAULT_GST_PERCENT = '18';
 
-// Delivery lot of a consignee: carries the product, qty and pricing (lots are the order's line items)
-const emptyLot = () => ({
-  lotNo: '',
-  grade: '',
+// Bar sizes offered in a lot's Section dropdown
+const SECTION_OPTIONS = ['8mm', '10mm', '12mm', '16mm', '20mm', '25mm', '28mm', '32mm'];
+
+// One section (bar size) of a lot: carries the qty and pricing
+const emptySection = () => ({
   section: '',
   qty: '',
   rate: '',
   gstPercent: DEFAULT_GST_PERCENT,
+});
+
+// Delivery lot of a consignee: lot no, grade, schedule and its sections (lots are the order's line items)
+const emptyLot = () => ({
+  lotNo: '',
+  grade: '',
+  sections: [emptySection()],
   startDate: '',
   endDate: '',
 });
 
-// GST % is pre-filled, so it does not make a lot "filled" on its own
+// GST % is pre-filled, so it does not make a section / lot "filled" on its own
+const isBlankSection = (sec) =>
+  !String(sec.section).trim() && String(sec.qty).trim() === '' && String(sec.rate).trim() === '';
+
 const isBlankLot = (lot) =>
   !lot.lotNo.trim() &&
   !lot.grade.trim() &&
-  !lot.section.trim() &&
-  String(lot.qty).trim() === '' &&
-  String(lot.rate).trim() === '' &&
+  lot.sections.every(isBlankSection) &&
   !lot.startDate &&
   !lot.endDate;
 
-// Lot value: qty x price, GST on top
-const getLotAmounts = (lot) => {
-  const qty = parseFloat(lot.qty) || 0;
-  const rate = parseFloat(lot.rate) || 0;
-  const gstPercent = parseFloat(lot.gstPercent) || 0;
+const filledSectionsOf = (lot) => lot.sections.filter((sec) => !isBlankSection(sec));
+
+// Section value: qty x price, GST on top
+const getSectionAmounts = (sec) => {
+  const qty = parseFloat(sec.qty) || 0;
+  const rate = parseFloat(sec.rate) || 0;
+  const gstPercent = parseFloat(sec.gstPercent) || 0;
   const taxable = qty * rate;
   const gstAmount = (taxable * gstPercent) / 100;
   return { qty, rate, gstPercent, taxable, gstAmount, total: taxable + gstAmount };
+};
+
+// Lot value: total of its sections; rate is the average price per MT, GST % only when all sections share it
+const getLotAmounts = (lot) => {
+  const parts = filledSectionsOf(lot).map(getSectionAmounts);
+  const sum = (k) => parts.reduce((acc, p) => acc + p[k], 0);
+  const qty = sum('qty');
+  const taxable = sum('taxable');
+  const gstAmount = sum('gstAmount');
+  const gstRates = [...new Set(parts.map((p) => p.gstPercent))];
+  return {
+    qty,
+    rate: qty > 0 ? taxable / qty : 0,
+    gstPercent: gstRates.length === 1 ? gstRates[0] : null,
+    taxable,
+    gstAmount,
+    total: taxable + gstAmount,
+  };
 };
 
 // Consignee (ship-to) record; the buyer (bill-to) is entered once for the whole order
@@ -78,7 +107,7 @@ const isBlankDeliveryRow = (row) =>
   !row.shippingGst.trim() &&
   row.lots.every(isBlankLot);
 
-const getRowQty = (row) => row.lots.reduce((acc, lot) => acc + (parseFloat(lot.qty) || 0), 0);
+const getRowQty = (row) => row.lots.reduce((acc, lot) => acc + getLotAmounts(lot).qty, 0);
 
 const round2 = (n) => Number((Number.isFinite(n) ? n : 0).toFixed(2));
 
@@ -89,17 +118,31 @@ const toInputValue = (v) => (v === null || v === undefined ? '' : String(v));
 const deliveryRowsFromOrder = (order) => {
   const deliveries = Array.isArray(order?.deliveries) ? order.deliveries : [];
   const rows = deliveries.map((d) => {
-    const lots = (Array.isArray(d.lotsList) ? d.lotsList : []).map((l) => ({
-      _key: l.key ? String(l.key) : undefined,
-      lotNo: toInputValue(l.lot_no),
-      grade: toInputValue(l.grade || d.grade),
-      section: toInputValue(l.section || d.section),
-      qty: toInputValue(l.qty),
-      rate: toInputValue(l.price),
-      gstPercent: l.gst_percent === null || l.gst_percent === undefined ? DEFAULT_GST_PERCENT : String(l.gst_percent),
-      startDate: toInputValue(l.start_date),
-      endDate: toInputValue(l.end_date),
-    }));
+    const gstOf = (v) => (v === null || v === undefined || v === '' ? DEFAULT_GST_PERCENT : String(v));
+    const lots = (Array.isArray(d.lotsList) ? d.lotsList : []).map((l) => {
+      // Lots saved before sections existed become a single section
+      const savedSections = Array.isArray(l.sections) && l.sections.length
+        ? l.sections.map((sec) => ({
+          section: toInputValue(sec.section),
+          qty: toInputValue(sec.qty),
+          rate: toInputValue(sec.price),
+          gstPercent: gstOf(sec.gst_percent),
+        }))
+        : [{
+          section: toInputValue(l.section || d.section),
+          qty: toInputValue(l.qty),
+          rate: toInputValue(l.price),
+          gstPercent: gstOf(l.gst_percent),
+        }];
+      return {
+        _key: l.key ? String(l.key) : undefined,
+        lotNo: toInputValue(l.lot_no),
+        grade: toInputValue(l.grade || d.grade),
+        sections: savedSections,
+        startDate: toInputValue(l.start_date),
+        endDate: toInputValue(l.end_date),
+      };
+    });
     return {
       _key: d.key ? String(d.key) : undefined,
       consigneeName: toInputValue(d.consignee_name),
@@ -397,6 +440,30 @@ export const CreateProjectOrderModal = ({
     );
   };
 
+  const updateLotSections = (rowIndex, lotIndex, fn) => {
+    setDeliveryRows((prev) =>
+      prev.map((row, idx) =>
+        idx === rowIndex
+          ? {
+            ...row,
+            lots: row.lots.map((lot, li) => (li === lotIndex ? { ...lot, sections: fn(lot.sections) } : lot)),
+          }
+          : row
+      )
+    );
+  };
+
+  const handleAddSection = (rowIndex, lotIndex) =>
+    updateLotSections(rowIndex, lotIndex, (secs) => [...secs, emptySection()]);
+
+  const handleRemoveSection = (rowIndex, lotIndex, secIndex) =>
+    updateLotSections(rowIndex, lotIndex, (secs) => (secs.length > 1 ? secs.filter((_, si) => si !== secIndex) : secs));
+
+  const handleSectionChange = (rowIndex, lotIndex, secIndex, field, value) =>
+    updateLotSections(rowIndex, lotIndex, (secs) =>
+      secs.map((sec, si) => (si === secIndex ? { ...sec, [field]: value } : sec))
+    );
+
   // Lots of every consignee (only rows with data) — the order's line items for party-based orders
   const filledLotsOf = (row) => row.lots.filter((lot) => !isBlankLot(lot));
   const allLots = deliveryRows.flatMap(filledLotsOf);
@@ -504,24 +571,37 @@ export const CreateProjectOrderModal = ({
       for (let j = 0; j < filledLots.length; j++) {
         const lot = filledLots[j];
         const lotLabel = `${label}, lot ${j + 1}`;
-        const q = parseFloat(lot.qty);
-        if (isNaN(q) || q <= 0) {
-          alert(`${lotLabel}: please enter a valid positive quantity (> 0 MT).`);
+        if ([lot.lotNo, lot.grade].some((v) => v.trim().length > SHORT_TEXT_MAX_LENGTH)) {
+          alert(`${lotLabel}: Lot No and Grade must be ${SHORT_TEXT_MAX_LENGTH} characters or fewer.`);
           return;
         }
-        const r = parseFloat(lot.rate);
-        if (String(lot.rate).trim() !== '' && (isNaN(r) || r < 0)) {
-          alert(`${lotLabel}: Price per MT cannot be negative.`);
+        const filledSections = filledSectionsOf(lot);
+        if (filledSections.length === 0) {
+          alert(`${lotLabel}: please add at least one section with its quantity.`);
           return;
         }
-        const g = parseFloat(lot.gstPercent);
-        if (String(lot.gstPercent).trim() !== '' && (isNaN(g) || g < 0 || g > 100)) {
-          alert(`${lotLabel}: GST % must be between 0 and 100.`);
-          return;
-        }
-        if ([lot.lotNo, lot.grade, lot.section].some((v) => v.trim().length > SHORT_TEXT_MAX_LENGTH)) {
-          alert(`${lotLabel}: Lot No, Grade and Section must be ${SHORT_TEXT_MAX_LENGTH} characters or fewer.`);
-          return;
+        for (let k = 0; k < filledSections.length; k++) {
+          const sec = filledSections[k];
+          const secLabel = `${lotLabel}, section ${k + 1}`;
+          if (!String(sec.section).trim()) {
+            alert(`${secLabel}: please select the section.`);
+            return;
+          }
+          const q = parseFloat(sec.qty);
+          if (isNaN(q) || q <= 0) {
+            alert(`${secLabel}: please enter a valid positive quantity (> 0 MT).`);
+            return;
+          }
+          const r = parseFloat(sec.rate);
+          if (String(sec.rate).trim() !== '' && (isNaN(r) || r < 0)) {
+            alert(`${secLabel}: Price per MT cannot be negative.`);
+            return;
+          }
+          const g = parseFloat(sec.gstPercent);
+          if (String(sec.gstPercent).trim() !== '' && (isNaN(g) || g < 0 || g > 100)) {
+            alert(`${secLabel}: GST % must be between 0 and 100.`);
+            return;
+          }
         }
         // yyyy-mm-dd strings from date inputs compare correctly as text
         if (lot.startDate && lot.endDate && lot.endDate < lot.startDate) {
@@ -541,24 +621,27 @@ export const CreateProjectOrderModal = ({
       // Line items in product_details (read by order lists and dispatch): built from the lots for party-based orders
       const sanitizedItems = useLotPricing
         ? filledDeliveryRows.flatMap((row) =>
-          filledLotsOf(row).map((lot) => {
-            const a = getLotAmounts(lot);
-            const grade = lot.grade.trim();
-            const section = lot.section.trim();
-            return {
-              productName: [grade, section].filter(Boolean).join(' ') || 'TMT Rebar',
-              grade: grade || null,
-              section: section || null,
-              lotNo: lot.lotNo.trim() || null,
-              consignee: row.consigneeName.trim() || row.shippingAddress.trim(),
-              qty: a.qty,
-              rate: a.rate,
-              total: round2(a.taxable),
-              gstPercent: a.gstPercent,
-              gstAmount: round2(a.gstAmount),
-              totalWithGst: round2(a.total),
-            };
-          })
+          filledLotsOf(row).flatMap((lot) =>
+            filledSectionsOf(lot).map((sec) => {
+              const a = getSectionAmounts(sec);
+              const grade = lot.grade.trim();
+              const section = String(sec.section).trim();
+              return {
+                productName: [grade, section].filter(Boolean).join(' ') || 'TMT Rebar',
+                size: section || null,
+                grade: grade || null,
+                section: section || null,
+                lotNo: lot.lotNo.trim() || null,
+                consignee: row.consigneeName.trim() || row.shippingAddress.trim(),
+                qty: a.qty,
+                rate: a.rate,
+                total: round2(a.taxable),
+                gstPercent: a.gstPercent,
+                gstAmount: round2(a.gstAmount),
+                totalWithGst: round2(a.total),
+              };
+            })
+          )
         )
         : items.map((it) => {
           const q = parseFloat(it.qty) || 0;
@@ -586,7 +669,10 @@ export const CreateProjectOrderModal = ({
       // delivery_details jsonb:
       // { "1": { billing_address, billing_address_gst_no, consignee_name, shipping_address, shipping_gst, qty,
       //          lots: { "1": { lot_no, grade, section, qty, price, gst_percent, gst_amount, total_price,
-      //                         start_date, end_date }, ... } }, "2": {...} }
+      //                         start_date, end_date,
+      //                         sections: [{ section, qty, price, gst_percent, gst_amount, total_price }] }, ... } },
+      //   "2": {...} }
+      // A lot's section / qty / price / totals summarise its sections (dispatch works per lot)
       // The buyer (billing) entered once is written into every consignee record; qty is the total of its lots
       // Keys: an edited order keeps each consignee's / lot's saved key; new ones get the next unused number
       const savedDeliveries = isEdit && Array.isArray(editOrder.deliveries) ? editOrder.deliveries : [];
@@ -633,7 +719,9 @@ export const CreateProjectOrderModal = ({
                     {
                       lot_no: lot.lotNo.trim() || null,
                       grade: lot.grade.trim() || null,
-                      section: lot.section.trim() || null,
+                      section:
+                        [...new Set(filledSectionsOf(lot).map((sec) => String(sec.section).trim()).filter(Boolean))].join(', ') ||
+                        null,
                       qty: round2(a.qty),
                       price: round2(a.rate),
                       gst_percent: a.gstPercent,
@@ -641,6 +729,17 @@ export const CreateProjectOrderModal = ({
                       total_price: round2(a.total),
                       start_date: lot.startDate || null,
                       end_date: lot.endDate || null,
+                      sections: filledSectionsOf(lot).map((sec) => {
+                        const sa = getSectionAmounts(sec);
+                        return {
+                          section: String(sec.section).trim() || null,
+                          qty: round2(sa.qty),
+                          price: round2(sa.rate),
+                          gst_percent: sa.gstPercent,
+                          gst_amount: round2(sa.gstAmount),
+                          total_price: round2(sa.total),
+                        };
+                      }),
                     },
                   ];
                 })
@@ -1106,8 +1205,8 @@ export const CreateProjectOrderModal = ({
                             )}
                           </div>
 
-                          {/* Product: lot no, grade, section */}
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
+                          {/* Product: lot no, grade */}
+                          <div className="grid grid-cols-2 gap-1.5">
                             <div>
                               <label className={lotLabelClass}>Lot No</label>
                               <input
@@ -1130,67 +1229,114 @@ export const CreateProjectOrderModal = ({
                                 className={lotInputClass}
                               />
                             </div>
-                            <div>
-                              <label className={lotLabelClass}>Section</label>
-                              <input
-                                type="text"
-                                maxLength={SHORT_TEXT_MAX_LENGTH}
-                                placeholder="e.g. TMT Bar"
-                                value={lot.section}
-                                onChange={(e) => handleLotChange(idx, li, 'section', e.target.value)}
-                                className={lotInputClass}
-                              />
-                            </div>
                           </div>
 
-                          {/* Pricing: qty, price, GST %, total */}
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
-                            <div>
-                              <label className={`${lotLabelClass} text-right`}>Qty (MT)</label>
-                              <input
-                                type="number"
-                                step="any"
-                                min="0"
-                                placeholder="MT"
-                                value={lot.qty}
-                                onChange={(e) => handleLotChange(idx, li, 'qty', e.target.value)}
-                                className={`${lotInputClass} text-right`}
-                              />
-                            </div>
-                            <div>
-                              <label className={`${lotLabelClass} text-right`}>Price (₹/MT)</label>
-                              <input
-                                type="number"
-                                step="any"
-                                min="0"
-                                placeholder="₹/MT"
-                                value={lot.rate}
-                                onChange={(e) => handleLotChange(idx, li, 'rate', e.target.value)}
-                                className={`${lotInputClass} text-right`}
-                              />
-                            </div>
-                            <div>
-                              <label className={`${lotLabelClass} text-right`}>GST %</label>
-                              <input
-                                type="number"
-                                step="any"
-                                min="0"
-                                max="100"
-                                placeholder="18"
-                                value={lot.gstPercent}
-                                onChange={(e) => handleLotChange(idx, li, 'gstPercent', e.target.value)}
-                                className={`${lotInputClass} text-right`}
-                              />
-                            </div>
-                            <div>
-                              <label className={`${lotLabelClass} text-right`}>Total Price (₹)</label>
-                              <div
-                                className="w-full rounded-md border border-slate-200 bg-slate-100 px-2 py-1.5 text-xs font-mono font-bold text-slate-900 text-right"
-                                title={`₹${lotAmounts.taxable.toLocaleString('en-IN', { maximumFractionDigits: 2 })} + GST ₹${lotAmounts.gstAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`}
-                              >
+                          {/* Sections: size, qty, price, GST %, total */}
+                          <div className="space-y-1.5 p-1.5 rounded-md border border-slate-200 bg-white">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[9px] font-bold text-slate-500 uppercase">
+                                Sections — {lotAmounts.qty.toFixed(2)} MT · ₹
                                 {lotAmounts.total.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                              </div>
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleAddSection(idx, li)}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold text-[#a81b1e] bg-red-50 hover:bg-red-100 border border-red-200 transition cursor-pointer"
+                              >
+                                <Plus className="w-3 h-3" />
+                                Add Section
+                              </button>
                             </div>
+                            {lot.sections.map((sec, si) => {
+                              const secAmounts = getSectionAmounts(sec);
+                              // Keep an older free-text section selectable when editing
+                              const secOptions =
+                                sec.section && !SECTION_OPTIONS.includes(sec.section)
+                                  ? [sec.section, ...SECTION_OPTIONS]
+                                  : SECTION_OPTIONS;
+                              return (
+                                <div
+                                  key={si}
+                                  className="grid grid-cols-2 sm:grid-cols-[1fr_1fr_1fr_0.8fr_1.2fr_auto] gap-1.5 items-end p-1.5 rounded border border-slate-100 bg-slate-50/60"
+                                >
+                                  <div className="col-span-2 sm:col-span-1">
+                                    <label className={lotLabelClass}>Section</label>
+                                    <select
+                                      value={sec.section}
+                                      onChange={(e) => handleSectionChange(idx, li, si, 'section', e.target.value)}
+                                      className={`${lotInputClass} cursor-pointer`}
+                                    >
+                                      <option value="">Select size</option>
+                                      {secOptions.map((opt) => (
+                                        <option key={opt} value={opt}>
+                                          {opt}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                  <div>
+                                    <label className={`${lotLabelClass} text-right`}>Qty (MT)</label>
+                                    <input
+                                      type="number"
+                                      step="any"
+                                      min="0"
+                                      placeholder="MT"
+                                      value={sec.qty}
+                                      onChange={(e) => handleSectionChange(idx, li, si, 'qty', e.target.value)}
+                                      className={`${lotInputClass} text-right`}
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className={`${lotLabelClass} text-right`}>Price (₹/MT)</label>
+                                    <input
+                                      type="number"
+                                      step="any"
+                                      min="0"
+                                      placeholder="₹/MT"
+                                      value={sec.rate}
+                                      onChange={(e) => handleSectionChange(idx, li, si, 'rate', e.target.value)}
+                                      className={`${lotInputClass} text-right`}
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className={`${lotLabelClass} text-right`}>GST %</label>
+                                    <input
+                                      type="number"
+                                      step="any"
+                                      min="0"
+                                      max="100"
+                                      placeholder="18"
+                                      value={sec.gstPercent}
+                                      onChange={(e) => handleSectionChange(idx, li, si, 'gstPercent', e.target.value)}
+                                      className={`${lotInputClass} text-right`}
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className={`${lotLabelClass} text-right`}>Total Price (₹)</label>
+                                    <div
+                                      className="w-full rounded-md border border-slate-200 bg-slate-100 px-2 py-1.5 text-xs font-mono font-bold text-slate-900 text-right"
+                                      title={`₹${secAmounts.taxable.toLocaleString('en-IN', { maximumFractionDigits: 2 })} + GST ₹${secAmounts.gstAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`}
+                                    >
+                                      {secAmounts.total.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </div>
+                                  </div>
+                                  <div className="flex justify-end pb-1">
+                                    {lot.sections.length > 1 ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRemoveSection(idx, li, si)}
+                                        className="text-slate-400 hover:text-red-600 p-0.5 rounded transition cursor-pointer"
+                                        title="Remove section"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    ) : (
+                                      <span className="w-4" />
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
 
                           {/* Schedule */}
