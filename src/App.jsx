@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, Suspense, lazy } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { AppProvider } from './context/AppContext';
 import { Navbar } from './components/common/Navbar';
@@ -6,21 +6,32 @@ import { Sidebar } from './components/common/Sidebar';
 
 // Pages
 import { Login } from './pages/Login';
-import { AdminDashboard } from './pages/AdminDashboard';
-import { DistributorDashboard } from './pages/DistributorDashboard';
-import { OrdersPage } from './pages/OrdersPage';
-import { DispatchPage } from './pages/DispatchPage';
-import { DistributorPage } from './pages/DistributorPage';
-import { SettingsPage } from './pages/SettingsPage';
-import { ProjectOrdersPage } from './pages/ProjectOrdersPage';
-import { AttendancePage } from './pages/AttendancePage';
-import { SalesVisitsPage } from './pages/SalesVisitsPage';
-import { FirmsPage } from './pages/FirmsPage';
-import { PendencyReportPage } from './pages/PendencyReportPage';
-import { DailySalesVisitPage } from './pages/DailySalesVisitPage';
 import { ShieldAlert } from 'lucide-react';
 import { APP_PAGES } from './data/pageAccess';
 import { useRoute, pathFor, parsePath, safeRedirectPath, loginPathFor } from './routes';
+
+// Pages load on first visit (keeps the initial download small)
+const AdminDashboard = lazy(() => import('./pages/AdminDashboard').then((m) => ({ default: m.AdminDashboard })));
+const DistributorDashboard = lazy(() => import('./pages/DistributorDashboard').then((m) => ({ default: m.DistributorDashboard })));
+const OrdersPage = lazy(() => import('./pages/OrdersPage').then((m) => ({ default: m.OrdersPage })));
+const DispatchPage = lazy(() => import('./pages/DispatchPage').then((m) => ({ default: m.DispatchPage })));
+const DistributorPage = lazy(() => import('./pages/DistributorPage').then((m) => ({ default: m.DistributorPage })));
+const SettingsPage = lazy(() => import('./pages/SettingsPage').then((m) => ({ default: m.SettingsPage })));
+const ProjectOrdersPage = lazy(() => import('./pages/ProjectOrdersPage').then((m) => ({ default: m.ProjectOrdersPage })));
+const AttendancePage = lazy(() => import('./pages/AttendancePage').then((m) => ({ default: m.AttendancePage })));
+const SalesVisitsPage = lazy(() => import('./pages/SalesVisitsPage').then((m) => ({ default: m.SalesVisitsPage })));
+const FirmsPage = lazy(() => import('./pages/FirmsPage').then((m) => ({ default: m.FirmsPage })));
+const PendencyReportPage = lazy(() => import('./pages/PendencyReportPage').then((m) => ({ default: m.PendencyReportPage })));
+const DailySalesVisitPage = lazy(() => import('./pages/DailySalesVisitPage').then((m) => ({ default: m.DailySalesVisitPage })));
+
+const PageLoader = () => (
+  <div className="min-h-[40vh] flex items-center justify-center text-slate-500 text-xs">
+    <div className="flex items-center gap-2">
+      <div className="w-4 h-4 border-2 border-[#a81b1e] border-t-transparent rounded-full animate-spin" />
+      <span>Loading...</span>
+    </div>
+  </div>
+);
 
 const NoPageAccess = ({ user, onLogout }) => (
   <div className="min-h-[60vh] flex items-center justify-center p-6">
@@ -190,7 +201,7 @@ const MainLayout = () => {
         />
 
         <main className="flex-1 p-3 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full overflow-y-auto transition-all duration-300">
-          {renderContent()}
+          <Suspense fallback={<PageLoader />}>{renderContent()}</Suspense>
         </main>
       </div>
     </div>
