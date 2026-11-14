@@ -20,6 +20,14 @@ const parseDetails = (value) => {
 const sectionsOf = (lot) => (Array.isArray(lot?.sections) ? lot.sections : []);
 const fmtPct = (v) => (v === null || v === undefined || v === '' ? '—' : `${num(v)}%`);
 
+// Labelled value: small caption above the value
+const Field = ({ label, children, className = "", valueClass = "text-slate-900" }) => (
+  <div className={`min-w-0 ${className}`}>
+    <span className="text-[9px] uppercase tracking-wide text-slate-400 block font-bold">{label}</span>
+    <span className={`block break-words font-semibold ${valueClass}`}>{children}</span>
+  </div>
+);
+
 const LotStatus = ({ pending, dispatched }) =>
   pending <= EPS ? (
     <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[10px] font-bold whitespace-nowrap">Dispatched</span>
@@ -216,26 +224,38 @@ export const ProjectOrderDetailModal = ({ isOpen, onClose, order, onEdit }) => {
               const cDispatched = lots.reduce((acc, l) => acc + lotInfo(d, l).dispatched, 0);
               return (
                 <div key={d.key || idx} className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-                  {/* Consignee header */}
-                  <div className="flex flex-wrap items-start justify-between gap-2 px-3 py-2.5 bg-slate-50 border-b border-slate-200">
-                    <div className="min-w-0">
-                      <span className="text-[9px] uppercase text-slate-400 font-bold">Consignee {idx + 1}</span>
-                      {d.consignee_name && <p className="font-bold text-slate-900 break-words">{d.consignee_name}</p>}
-                      <p className="text-slate-700 break-words">{d.shipping_address || '—'}</p>
-                      <p className="text-[11px] font-mono text-slate-500">GST: {d.shipping_gst || '—'}</p>
+                  {/* Consignee header: who and where, then its quantities */}
+                  <div className="px-3 py-2.5 bg-slate-50 border-b border-slate-200 space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex flex-wrap items-center gap-2 min-w-0">
+                        <span className="px-1.5 py-0.5 rounded bg-[#a81b1e] text-white text-[10px] font-bold uppercase whitespace-nowrap">
+                          Consignee {idx + 1}
+                        </span>
+                        <span className="font-extrabold text-[13px] text-slate-900 break-words">
+                          {d.consignee_name || '—'}
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-bold text-slate-500 uppercase whitespace-nowrap">
+                        {lots.length} lot{lots.length === 1 ? '' : 's'}
+                      </span>
                     </div>
-                    <div className="flex gap-3 text-right shrink-0">
-                      <div>
-                        <span className="text-[9px] uppercase text-slate-400 block font-bold">Qty</span>
-                        <span className="font-mono font-bold text-slate-900">{fmtMT(cQty)}</span>
+                    <div className="grid grid-cols-1 sm:grid-cols-[2fr_1fr] gap-2.5">
+                      <Field label="Shipping Address">{d.shipping_address || '—'}</Field>
+                      <Field label="Consignee GST No." valueClass="font-mono text-slate-800">
+                        {d.shipping_gst || '—'}
+                      </Field>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="px-2 py-1.5 rounded-md border border-slate-200 bg-white">
+                        <Field label="Ordered Qty" valueClass="font-mono font-bold text-slate-900">{fmtMT(cQty)}</Field>
                       </div>
-                      <div>
-                        <span className="text-[9px] uppercase text-slate-400 block font-bold">Dispatched</span>
-                        <span className="font-mono font-bold text-emerald-700">{fmtMT(cDispatched)}</span>
+                      <div className="px-2 py-1.5 rounded-md border border-emerald-200 bg-emerald-50/60">
+                        <Field label="Dispatched" valueClass="font-mono font-bold text-emerald-700">{fmtMT(cDispatched)}</Field>
                       </div>
-                      <div>
-                        <span className="text-[9px] uppercase text-slate-400 block font-bold">Pending</span>
-                        <span className="font-mono font-bold text-amber-700">{fmtMT(Math.max(0, cQty - cDispatched))}</span>
+                      <div className="px-2 py-1.5 rounded-md border border-amber-200 bg-amber-50/60">
+                        <Field label="Pending" valueClass="font-mono font-bold text-amber-700">
+                          {fmtMT(Math.max(0, cQty - cDispatched))}
+                        </Field>
                       </div>
                     </div>
                   </div>
@@ -243,162 +263,149 @@ export const ProjectOrderDetailModal = ({ isOpen, onClose, order, onEdit }) => {
                   {lots.length === 0 ? (
                     <p className="px-3 py-2 text-slate-400 italic">No lots recorded for this consignee.</p>
                   ) : (
-                    <>
-                      {/* Mobile lot cards */}
-                      <div className="block sm:hidden divide-y divide-slate-100">
-                        {lots.map((l, li) => {
-                          const { dispatched, pending } = lotInfo(d, l);
-                          return (
-                            <div key={l.key || li} className="px-3 py-2 space-y-1.5">
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="flex items-center gap-1 font-bold text-slate-900">
-                                  <Package className="w-3 h-3 text-slate-400" />
-                                  {l.lot_no || `Lot ${li + 1}`}
-                                </span>
-                                <LotStatus pending={pending} dispatched={dispatched} />
-                              </div>
-                              {(l.grade || l.section || d.grade || d.section) && (
-                                <p className="text-slate-600">
-                                  {[l.grade || d.grade, l.section || d.section].filter(Boolean).join(' · ')}
-                                </p>
+                    <div className="p-2.5 space-y-2.5">
+                      {lots.map((l, li) => {
+                        const { dispatched, pending } = lotInfo(d, l);
+                        const secs = sectionsOf(l);
+                        const taxable = secs.length
+                          ? secs.reduce((acc, s) => acc + num(s.qty) * num(s.price), 0)
+                          : num(l.qty) * num(l.price);
+                        const hasGstPct = l.gst_percent !== null && l.gst_percent !== undefined && l.gst_percent !== '';
+                        const gstLabel =
+                          num(l.gst_amount) > 0
+                            ? `${fmtINR(l.gst_amount)}${hasGstPct ? ` (${num(l.gst_percent)}%)` : ''}`
+                            : hasGstPct
+                              ? `${num(l.gst_percent)}%`
+                              : '—';
+                        return (
+                          <div key={l.key || li} className="rounded-lg border border-slate-200 overflow-hidden">
+                            {/* Lot header */}
+                            <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-slate-100/70 border-b border-slate-200">
+                              <span className="flex items-center gap-1.5 font-bold text-slate-900">
+                                <Package className="w-3.5 h-3.5 text-slate-500" />
+                                <span className="text-[10px] uppercase text-slate-500">Lot {li + 1}</span>
+                                {l.lot_no && <span className="font-mono">· {l.lot_no}</span>}
+                              </span>
+                              <LotStatus pending={pending} dispatched={dispatched} />
+                            </div>
+
+                            {/* Lot details */}
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-3 gap-y-2.5 px-3 py-2.5">
+                              <Field label="Ordered Qty" valueClass="font-mono font-bold text-slate-900">{fmtMT(l.qty)}</Field>
+                              <Field label="Dispatched" valueClass="font-mono font-bold text-emerald-700">{fmtMT(dispatched)}</Field>
+                              <Field label="Pending" valueClass="font-mono font-bold text-amber-700">{fmtMT(pending)}</Field>
+                              <Field label="Delivery Window" valueClass="font-mono text-slate-800">
+                                {l.start_date || l.end_date ? `${l.start_date || '—'} → ${l.end_date || '—'}` : '—'}
+                              </Field>
+                              <Field label={secs.length > 1 ? 'Avg. Rate / MT' : 'Rate / MT'} valueClass="font-mono text-slate-800">
+                                {fmtINR(l.price)}
+                              </Field>
+                              <Field label="Taxable Value" valueClass="font-mono text-slate-800">{fmtINR(taxable)}</Field>
+                              <Field label="GST" valueClass="font-mono text-slate-800">{gstLabel}</Field>
+                              <Field label="Total (incl. GST)" valueClass="font-mono font-black text-[#a81b1e]">
+                                {fmtINR(l.total_price)}
+                              </Field>
+                              {/* Lots saved before sections existed keep grade / section on the lot */}
+                              {secs.length === 0 && (
+                                <>
+                                  <Field label="Grade">{l.grade || d.grade || '—'}</Field>
+                                  <Field label="Section">{l.section || d.section || '—'}</Field>
+                                </>
                               )}
-                              <div className="grid grid-cols-3 gap-1.5 text-[11px]">
-                                <div>
-                                  <span className="text-[9px] uppercase text-slate-400 block font-bold">Qty</span>
-                                  <span className="font-mono font-bold">{fmtMT(l.qty)}</span>
-                                </div>
-                                <div>
-                                  <span className="text-[9px] uppercase text-slate-400 block font-bold">Dispatched</span>
-                                  <span className="font-mono font-bold text-emerald-700">{fmtMT(dispatched)}</span>
-                                </div>
-                                <div>
-                                  <span className="text-[9px] uppercase text-slate-400 block font-bold">Pending</span>
-                                  <span className="font-mono font-bold text-amber-700">{fmtMT(pending)}</span>
-                                </div>
-                                <div>
-                                  <span className="text-[9px] uppercase text-slate-400 block font-bold">Rate</span>
-                                  <span className="font-mono">{fmtINR(l.price)}</span>
-                                </div>
-                                <div className="col-span-2">
-                                  <span className="text-[9px] uppercase text-slate-400 block font-bold">
-                                    Amount{num(l.gst_percent) > 0 ? ` (incl. ${num(l.gst_percent)}% GST)` : ''}
-                                  </span>
-                                  <span className="font-mono font-bold">{fmtINR(l.total_price)}</span>
-                                </div>
-                              </div>
-                              {(l.start_date || l.end_date) && (
-                                <p className="text-[11px] font-mono text-slate-500">
-                                  Delivery: {l.start_date || '—'} → {l.end_date || '—'}
+                            </div>
+
+                            {secs.length > 0 && (
+                              <div className="border-t border-slate-200">
+                                <p className="px-3 pt-2 pb-1 text-[10px] font-bold uppercase text-slate-500 flex items-center gap-1.5">
+                                  <Layers className="w-3 h-3 text-[#a81b1e]" />
+                                  Sections ({secs.length})
                                 </p>
-                              )}
-                              {sectionsOf(l).length > 0 && (
-                                <div className="rounded-md border border-slate-200 bg-slate-50/70 divide-y divide-slate-200/70">
-                                  {sectionsOf(l).map((sec, si) => (
-                                    <div key={si} className="px-2 py-1.5 text-[11px] space-y-0.5">
+
+                                {/* Mobile section cards */}
+                                <div className="block sm:hidden px-2.5 pb-2.5 space-y-2">
+                                  {secs.map((sec, si) => (
+                                    <div key={si} className="rounded-md border border-slate-200 bg-slate-50/70 p-2 space-y-2">
                                       <div className="flex items-center justify-between gap-2">
-                                        <span className="px-1.5 py-0.5 rounded bg-white border border-slate-200 font-bold text-slate-800">
-                                          {sec.section || `Section ${si + 1}`}
+                                        <span className="text-[10px] font-bold uppercase text-slate-500">Section {si + 1}</span>
+                                        <span className="px-1.5 py-0.5 rounded bg-white border border-slate-200 font-bold text-slate-900">
+                                          {sec.section || '—'}
                                         </span>
-                                        <span className="font-mono font-bold text-slate-900">{fmtMT(sec.qty)}</span>
                                       </div>
-                                      <div className="flex items-center justify-between gap-2 text-slate-600 font-mono">
-                                        <span>
-                                          {fmtINR(sec.price)}/MT · GST {fmtPct(sec.gst_percent)}
-                                        </span>
-                                        <span className="font-bold text-slate-900">{fmtINR(sec.total_price)}</span>
+                                      <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+                                        <Field label="Grade">{sec.grade || l.grade || d.grade || '—'}</Field>
+                                        <Field label="Mode of Bundle">{sec.bundle_mode || '—'}</Field>
+                                        <Field label="Qty" valueClass="font-mono font-bold text-slate-900">{fmtMT(sec.qty)}</Field>
+                                        <Field label="Price / MT" valueClass="font-mono text-slate-800">{fmtINR(sec.price)}</Field>
+                                        <Field label="Taxable Value" valueClass="font-mono text-slate-800">
+                                          {fmtINR(num(sec.qty) * num(sec.price))}
+                                        </Field>
+                                        <Field label={`GST (${fmtPct(sec.gst_percent)})`} valueClass="font-mono text-slate-800">
+                                          {fmtINR(sec.gst_amount)}
+                                        </Field>
+                                        <Field label="Total Price" className="col-span-2" valueClass="font-mono font-bold text-slate-900">
+                                          {fmtINR(sec.total_price)}
+                                        </Field>
                                       </div>
                                     </div>
                                   ))}
                                 </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
 
-                      {/* Desktop lot table */}
-                      <div className="hidden sm:block overflow-x-auto">
-                        <table className="w-full text-left text-[11px]">
-                          <thead className="text-[10px] font-bold uppercase text-slate-500 border-b border-slate-100">
-                            <tr>
-                              <th className="py-2 px-3">Lot</th>
-                              <th className="py-2 px-3">Grade</th>
-                              <th className="py-2 px-3">Section</th>
-                              <th className="py-2 px-3 text-right">Qty</th>
-                              <th className="py-2 px-3 text-right">Rate / MT</th>
-                              <th className="py-2 px-3 text-right">Amount</th>
-                              <th className="py-2 px-3 whitespace-nowrap">Delivery Window</th>
-                              <th className="py-2 px-3 text-right">Dispatched</th>
-                              <th className="py-2 px-3 text-right">Pending</th>
-                              <th className="py-2 px-3 text-center">Status</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100">
-                            {lots.map((l, li) => {
-                              const { dispatched, pending } = lotInfo(d, l);
-                              return (
-                                <React.Fragment key={l.key || li}>
-                                <tr className="hover:bg-slate-50">
-                                  <td className="py-2 px-3 font-bold text-slate-900 whitespace-nowrap">{l.lot_no || `Lot ${li + 1}`}</td>
-                                  <td className="py-2 px-3 text-slate-700">{l.grade || d.grade || '—'}</td>
-                                  <td className="py-2 px-3 text-slate-700">{l.section || d.section || '—'}</td>
-                                  <td className="py-2 px-3 text-right font-mono font-bold text-slate-900 whitespace-nowrap">{fmtMT(l.qty)}</td>
-                                  <td className="py-2 px-3 text-right font-mono text-slate-700">{fmtINR(l.price)}</td>
-                                  <td
-                                    className="py-2 px-3 text-right font-mono font-bold text-slate-900"
-                                    title={num(l.gst_percent) > 0 ? `Incl. ${num(l.gst_percent)}% GST (${fmtINR(l.gst_amount)})` : undefined}
-                                  >
-                                    {fmtINR(l.total_price)}
-                                  </td>
-                                  <td className="py-2 px-3 font-mono text-slate-500 whitespace-nowrap">
-                                    {l.start_date || l.end_date ? `${l.start_date || '—'} → ${l.end_date || '—'}` : '—'}
-                                  </td>
-                                  <td className="py-2 px-3 text-right font-mono font-bold text-emerald-700 whitespace-nowrap">{fmtMT(dispatched)}</td>
-                                  <td className="py-2 px-3 text-right font-mono font-bold text-amber-700 whitespace-nowrap">{fmtMT(pending)}</td>
-                                  <td className="py-2 px-3 text-center">
-                                    <LotStatus pending={pending} dispatched={dispatched} />
-                                  </td>
-                                </tr>
-                                {sectionsOf(l).length > 0 && (
-                                  <tr className="bg-slate-50/60">
-                                    <td />
-                                    <td colSpan={9} className="py-1.5 pr-3">
-                                      <table className="w-full text-[11px] rounded-md border border-slate-200 bg-white overflow-hidden">
-                                        <thead className="text-[9px] font-bold uppercase text-slate-400 bg-slate-50 border-b border-slate-200">
-                                          <tr>
-                                            <th className="py-1 px-2 text-left">Section</th>
-                                            <th className="py-1 px-2 text-right">Qty</th>
-                                            <th className="py-1 px-2 text-right">Price / MT</th>
-                                            <th className="py-1 px-2 text-right">Taxable</th>
-                                            <th className="py-1 px-2 text-right">GST %</th>
-                                            <th className="py-1 px-2 text-right">GST Amount</th>
-                                            <th className="py-1 px-2 text-right">Total Price</th>
-                                          </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-slate-100 font-mono">
-                                          {sectionsOf(l).map((sec, si) => (
-                                            <tr key={si}>
-                                              <td className="py-1 px-2 font-sans font-bold text-slate-800">{sec.section || `Section ${si + 1}`}</td>
-                                              <td className="py-1 px-2 text-right font-bold text-slate-900 whitespace-nowrap">{fmtMT(sec.qty)}</td>
-                                              <td className="py-1 px-2 text-right text-slate-700">{fmtINR(sec.price)}</td>
-                                              <td className="py-1 px-2 text-right text-slate-700">{fmtINR(num(sec.qty) * num(sec.price))}</td>
-                                              <td className="py-1 px-2 text-right text-slate-700">{fmtPct(sec.gst_percent)}</td>
-                                              <td className="py-1 px-2 text-right text-slate-700">{fmtINR(sec.gst_amount)}</td>
-                                              <td className="py-1 px-2 text-right font-bold text-slate-900">{fmtINR(sec.total_price)}</td>
-                                            </tr>
-                                          ))}
-                                        </tbody>
-                                      </table>
-                                    </td>
-                                  </tr>
-                                )}
-                                </React.Fragment>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    </>
+                                {/* Desktop section table */}
+                                <div className="hidden sm:block overflow-x-auto">
+                                  <table className="w-full text-left text-[11px]">
+                                    <thead className="text-[9px] font-bold uppercase text-slate-500 bg-slate-50 border-y border-slate-200">
+                                      <tr>
+                                        <th className="py-1.5 px-3">#</th>
+                                        <th className="py-1.5 px-2">Section</th>
+                                        <th className="py-1.5 px-2">Grade</th>
+                                        <th className="py-1.5 px-2 whitespace-nowrap">Mode of Bundle</th>
+                                        <th className="py-1.5 px-2 text-right">Qty</th>
+                                        <th className="py-1.5 px-2 text-right whitespace-nowrap">Price / MT</th>
+                                        <th className="py-1.5 px-2 text-right">Taxable</th>
+                                        <th className="py-1.5 px-2 text-right whitespace-nowrap">GST %</th>
+                                        <th className="py-1.5 px-2 text-right whitespace-nowrap">GST Amount</th>
+                                        <th className="py-1.5 px-3 text-right whitespace-nowrap">Total Price</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100">
+                                      {secs.map((sec, si) => (
+                                        <tr key={si} className="hover:bg-slate-50">
+                                          <td className="py-1.5 px-3 font-mono text-slate-400">{si + 1}</td>
+                                          <td className="py-1.5 px-2 font-bold text-slate-900">{sec.section || '—'}</td>
+                                          <td className="py-1.5 px-2 text-slate-700">{sec.grade || l.grade || d.grade || '—'}</td>
+                                          <td className="py-1.5 px-2 text-slate-700">{sec.bundle_mode || '—'}</td>
+                                          <td className="py-1.5 px-2 text-right font-mono font-bold text-slate-900 whitespace-nowrap">{fmtMT(sec.qty)}</td>
+                                          <td className="py-1.5 px-2 text-right font-mono text-slate-700">{fmtINR(sec.price)}</td>
+                                          <td className="py-1.5 px-2 text-right font-mono text-slate-700">{fmtINR(num(sec.qty) * num(sec.price))}</td>
+                                          <td className="py-1.5 px-2 text-right font-mono text-slate-700">{fmtPct(sec.gst_percent)}</td>
+                                          <td className="py-1.5 px-2 text-right font-mono text-slate-700">{fmtINR(sec.gst_amount)}</td>
+                                          <td className="py-1.5 px-3 text-right font-mono font-bold text-slate-900">{fmtINR(sec.total_price)}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                    {secs.length > 1 && (
+                                      <tfoot className="bg-slate-50 border-t border-slate-200 font-mono font-bold text-slate-900">
+                                        <tr>
+                                          <td colSpan={4} className="py-1.5 px-3 font-sans text-[10px] uppercase text-slate-500">
+                                            Lot Total
+                                          </td>
+                                          <td className="py-1.5 px-2 text-right whitespace-nowrap">{fmtMT(l.qty)}</td>
+                                          <td />
+                                          <td className="py-1.5 px-2 text-right">{fmtINR(taxable)}</td>
+                                          <td />
+                                          <td className="py-1.5 px-2 text-right">{fmtINR(l.gst_amount)}</td>
+                                          <td className="py-1.5 px-3 text-right text-[#a81b1e]">{fmtINR(l.total_price)}</td>
+                                        </tr>
+                                      </tfoot>
+                                    )}
+                                  </table>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   )}
                 </div>
               );

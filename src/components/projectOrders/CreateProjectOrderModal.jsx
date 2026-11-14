@@ -35,18 +35,22 @@ const DEFAULT_GST_PERCENT = '18';
 // Bar sizes offered in a lot's Section dropdown
 const SECTION_OPTIONS = ['8mm', '10mm', '12mm', '16mm', '20mm', '25mm', '28mm', '32mm'];
 
-// One section (bar size) of a lot: carries the qty and pricing
+// How a section's bars are bundled
+const BUNDLE_MODE_OPTIONS = ['Straight', 'U-Bend'];
+
+// One section (bar size) of a lot: carries its grade, mode of bundle, qty and pricing
 const emptySection = () => ({
   section: '',
+  grade: '',
+  bundleMode: '',
   qty: '',
   rate: '',
   gstPercent: DEFAULT_GST_PERCENT,
 });
 
-// Delivery lot of a consignee: lot no, grade, schedule and its sections (lots are the order's line items)
+// Delivery lot of a consignee: lot no, schedule and its sections (lots are the order's line items)
 const emptyLot = () => ({
   lotNo: '',
-  grade: '',
   sections: [emptySection()],
   startDate: '',
   endDate: '',
@@ -54,11 +58,18 @@ const emptyLot = () => ({
 
 // GST % is pre-filled, so it does not make a section / lot "filled" on its own
 const isBlankSection = (sec) =>
-  !String(sec.section).trim() && String(sec.qty).trim() === '' && String(sec.rate).trim() === '';
+  !String(sec.section).trim() &&
+  !String(sec.grade || '').trim() &&
+  !String(sec.bundleMode || '').trim() &&
+  String(sec.qty).trim() === '' &&
+  String(sec.rate).trim() === '';
+
+// Distinct grades of a lot's sections, e.g. "Fe 550D, Fe 500" (the lot-level grade summary)
+const lotGradeOf = (lot) =>
+  [...new Set(lot.sections.filter((sec) => !isBlankSection(sec)).map((sec) => String(sec.grade || '').trim()).filter(Boolean))].join(', ');
 
 const isBlankLot = (lot) =>
   !lot.lotNo.trim() &&
-  !lot.grade.trim() &&
   lot.sections.every(isBlankSection) &&
   !lot.startDate &&
   !lot.endDate;
@@ -120,16 +131,21 @@ const deliveryRowsFromOrder = (order) => {
   const rows = deliveries.map((d) => {
     const gstOf = (v) => (v === null || v === undefined || v === '' ? DEFAULT_GST_PERCENT : String(v));
     const lots = (Array.isArray(d.lotsList) ? d.lotsList : []).map((l) => {
-      // Lots saved before sections existed become a single section
+      // Lots saved before sections existed become a single section;
+      // sections saved before they carried a grade take the lot's grade
       const savedSections = Array.isArray(l.sections) && l.sections.length
         ? l.sections.map((sec) => ({
           section: toInputValue(sec.section),
+          grade: toInputValue(sec.grade || l.grade || d.grade),
+          bundleMode: toInputValue(sec.bundle_mode),
           qty: toInputValue(sec.qty),
           rate: toInputValue(sec.price),
           gstPercent: gstOf(sec.gst_percent),
         }))
         : [{
           section: toInputValue(l.section || d.section),
+          grade: toInputValue(l.grade || d.grade),
+          bundleMode: toInputValue(l.bundle_mode),
           qty: toInputValue(l.qty),
           rate: toInputValue(l.price),
           gstPercent: gstOf(l.gst_percent),
@@ -137,7 +153,6 @@ const deliveryRowsFromOrder = (order) => {
       return {
         _key: l.key ? String(l.key) : undefined,
         lotNo: toInputValue(l.lot_no),
-        grade: toInputValue(l.grade || d.grade),
         sections: savedSections,
         startDate: toInputValue(l.start_date),
         endDate: toInputValue(l.end_date),
@@ -571,8 +586,8 @@ export const CreateProjectOrderModal = ({
       for (let j = 0; j < filledLots.length; j++) {
         const lot = filledLots[j];
         const lotLabel = `${label}, lot ${j + 1}`;
-        if ([lot.lotNo, lot.grade].some((v) => v.trim().length > SHORT_TEXT_MAX_LENGTH)) {
-          alert(`${lotLabel}: Lot No and Grade must be ${SHORT_TEXT_MAX_LENGTH} characters or fewer.`);
+        if (lot.lotNo.trim().length > SHORT_TEXT_MAX_LENGTH) {
+          alert(`${lotLabel}: Lot No must be ${SHORT_TEXT_MAX_LENGTH} characters or fewer.`);
           return;
         }
         const filledSections = filledSectionsOf(lot);
@@ -585,6 +600,10 @@ export const CreateProjectOrderModal = ({
           const secLabel = `${lotLabel}, section ${k + 1}`;
           if (!String(sec.section).trim()) {
             alert(`${secLabel}: please select the section.`);
+            return;
+          }
+          if (String(sec.grade || '').trim().length > SHORT_TEXT_MAX_LENGTH) {
+            alert(`${secLabel}: Grade must be ${SHORT_TEXT_MAX_LENGTH} characters or fewer.`);
             return;
           }
           const q = parseFloat(sec.qty);
@@ -624,13 +643,14 @@ export const CreateProjectOrderModal = ({
           filledLotsOf(row).flatMap((lot) =>
             filledSectionsOf(lot).map((sec) => {
               const a = getSectionAmounts(sec);
-              const grade = lot.grade.trim();
+              const grade = String(sec.grade || '').trim();
               const section = String(sec.section).trim();
               return {
                 productName: [grade, section].filter(Boolean).join(' ') || 'TMT Rebar',
                 size: section || null,
                 grade: grade || null,
                 section: section || null,
+                bundleMode: sec.bundleMode || null,
                 lotNo: lot.lotNo.trim() || null,
                 consignee: row.consigneeName.trim() || row.shippingAddress.trim(),
                 qty: a.qty,
@@ -670,7 +690,7 @@ export const CreateProjectOrderModal = ({
       // { "1": { billing_address, billing_address_gst_no, consignee_name, shipping_address, shipping_gst, qty,
       //          lots: { "1": { lot_no, grade, section, qty, price, gst_percent, gst_amount, total_price,
       //                         start_date, end_date,
-      //                         sections: [{ section, qty, price, gst_percent, gst_amount, total_price }] }, ... } },
+      //                         sections: [{ section, grade, bundle_mode, qty, price, gst_percent, gst_amount, total_price }] }, ... } },
       //   "2": {...} }
       // A lot's section / qty / price / totals summarise its sections (dispatch works per lot)
       // The buyer (billing) entered once is written into every consignee record; qty is the total of its lots
@@ -718,7 +738,7 @@ export const CreateProjectOrderModal = ({
                     lotKeysOf(row, rowKeys[idx])[li],
                     {
                       lot_no: lot.lotNo.trim() || null,
-                      grade: lot.grade.trim() || null,
+                      grade: lotGradeOf(lot) || null,
                       section:
                         [...new Set(filledSectionsOf(lot).map((sec) => String(sec.section).trim()).filter(Boolean))].join(', ') ||
                         null,
@@ -733,6 +753,8 @@ export const CreateProjectOrderModal = ({
                         const sa = getSectionAmounts(sec);
                         return {
                           section: String(sec.section).trim() || null,
+                          grade: String(sec.grade || '').trim() || null,
+                          bundle_mode: sec.bundleMode || null,
                           qty: round2(sa.qty),
                           price: round2(sa.rate),
                           gst_percent: sa.gstPercent,
@@ -1205,33 +1227,20 @@ export const CreateProjectOrderModal = ({
                             )}
                           </div>
 
-                          {/* Product: lot no, grade */}
-                          <div className="grid grid-cols-2 gap-1.5">
-                            <div>
-                              <label className={lotLabelClass}>Lot No</label>
-                              <input
-                                type="text"
-                                maxLength={SHORT_TEXT_MAX_LENGTH}
-                                placeholder={`Lot ${li + 1}`}
-                                value={lot.lotNo}
-                                onChange={(e) => handleLotChange(idx, li, 'lotNo', e.target.value)}
-                                className={lotInputClass}
-                              />
-                            </div>
-                            <div>
-                              <label className={lotLabelClass}>Grade</label>
-                              <input
-                                type="text"
-                                maxLength={SHORT_TEXT_MAX_LENGTH}
-                                placeholder="e.g. Fe 550D"
-                                value={lot.grade}
-                                onChange={(e) => handleLotChange(idx, li, 'grade', e.target.value)}
-                                className={lotInputClass}
-                              />
-                            </div>
+                          {/* Lot no */}
+                          <div>
+                            <label className={lotLabelClass}>Lot No</label>
+                            <input
+                              type="text"
+                              maxLength={SHORT_TEXT_MAX_LENGTH}
+                              placeholder={`Lot ${li + 1}`}
+                              value={lot.lotNo}
+                              onChange={(e) => handleLotChange(idx, li, 'lotNo', e.target.value)}
+                              className={lotInputClass}
+                            />
                           </div>
 
-                          {/* Sections: size, qty, price, GST %, total */}
+                          {/* Sections: size, grade, mode of bundle, qty, price, GST %, total */}
                           <div className="space-y-1.5 p-1.5 rounded-md border border-slate-200 bg-white">
                             <div className="flex items-center justify-between">
                               <span className="text-[9px] font-bold text-slate-500 uppercase">
@@ -1254,11 +1263,17 @@ export const CreateProjectOrderModal = ({
                                 sec.section && !SECTION_OPTIONS.includes(sec.section)
                                   ? [sec.section, ...SECTION_OPTIONS]
                                   : SECTION_OPTIONS;
+                              // Keep an unlisted saved mode selectable when editing
+                              const bundleOptions =
+                                sec.bundleMode && !BUNDLE_MODE_OPTIONS.includes(sec.bundleMode)
+                                  ? [sec.bundleMode, ...BUNDLE_MODE_OPTIONS]
+                                  : BUNDLE_MODE_OPTIONS;
                               return (
                                 <div
                                   key={si}
-                                  className="grid grid-cols-2 sm:grid-cols-[1fr_1fr_1fr_0.8fr_1.2fr_auto] gap-1.5 items-end p-1.5 rounded border border-slate-100 bg-slate-50/60"
+                                  className="space-y-1.5 p-1.5 rounded border border-slate-100 bg-slate-50/60"
                                 >
+                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 items-end">
                                   <div className="col-span-2 sm:col-span-1">
                                     <label className={lotLabelClass}>Section</label>
                                     <select
@@ -1274,6 +1289,34 @@ export const CreateProjectOrderModal = ({
                                       ))}
                                     </select>
                                   </div>
+                                  <div>
+                                    <label className={lotLabelClass}>Grade</label>
+                                    <input
+                                      type="text"
+                                      maxLength={SHORT_TEXT_MAX_LENGTH}
+                                      placeholder="e.g. Fe 550D"
+                                      value={sec.grade || ''}
+                                      onChange={(e) => handleSectionChange(idx, li, si, 'grade', e.target.value)}
+                                      className={lotInputClass}
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className={lotLabelClass}>Mode of Bundle</label>
+                                    <select
+                                      value={sec.bundleMode || ''}
+                                      onChange={(e) => handleSectionChange(idx, li, si, 'bundleMode', e.target.value)}
+                                      className={`${lotInputClass} cursor-pointer`}
+                                    >
+                                      <option value="">Select mode</option>
+                                      {bundleOptions.map((opt) => (
+                                        <option key={opt} value={opt}>
+                                          {opt}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                </div>
+                                <div className="grid grid-cols-2 sm:grid-cols-[1fr_1fr_0.8fr_1.2fr_auto] gap-1.5 items-end">
                                   <div>
                                     <label className={`${lotLabelClass} text-right`}>Qty (MT)</label>
                                     <input
@@ -1334,6 +1377,7 @@ export const CreateProjectOrderModal = ({
                                       <span className="w-4" />
                                     )}
                                   </div>
+                                </div>
                                 </div>
                               );
                             })}
